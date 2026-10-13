@@ -43,8 +43,10 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   through D1. Roles: `admin`, `operator` (can write), `viewer` (read-only).
 - **TicketSource (read-only):** the app only ever sends `GET` requests to `api.ticketsource.io`; the client refuses any other
   method, so nothing is written back. Needs the `TICKETSOURCE_API_KEY` secret (TicketSource Settings > API).
-  - *Events tab -> TicketSource:* lists events as **unsettled / settled / archived**. TicketSource's API has no settlement flag,
-    so an event counts as settled `TS_SETTLEMENT_DAYS` (default 14) after its last date ends; admins can pin it either way.
+  - *Events -> Retrieve events from TicketSource* (and the TicketSource tab) lists every event as **unsettled / settled / archived**,
+    using TicketSource's own `settled` and `archived` properties. Note that `GET /events` silently defaults to
+    `filter[settled]=false`, hiding settled events, so the app requests `settled`/`archived` with the `any` operator and fetches
+    the settled set separately. The Events page has an archive filter (all / not archived / archived only).
   - *Refresh bookings* on an event pulls its bookings, customers (encrypted), attendee details (encrypted) and transaction lines.
     Unsettled events pull only what changed since the date's last checkpoint; settled/archived events are re-read in full.
     *Full re-sync* ignores the checkpoint and caches.
@@ -53,5 +55,12 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
     `Retry-After`. Each request does at most `TS_STEP_CALLS` (default 40) API calls and saves its position; the UI keeps stepping
     until the event is done, so large events simply take a few minutes.
   - Imported tickets get barcodes like `<booking ref>-<n>` (TicketSource's own barcodes are not exposed by the API).
+- **Analysis** and **Discount Codes** tabs are computed from the locally stored download (never live from TicketSource):
+  sales over time (whole event / daily / weekly / monthly, Europe/London, weeks start Monday, attributed to the booking's original
+  creation date with its *current* tickets and money), compare events (aligned on days before each booking's own performance,
+  optional sales-to-date cutoff and all-events average) and discount-code usage (by performance year, distinct bookings, case/diacritic/
+  whitespace-insensitive code merging, unknown amounts shown as Unknown, reversal-only codes flagged). Periods the download does not
+  cover show "No data", never zero. TicketSource supplies no currency, so amounts are recorded as GBP; the analysis keeps currencies separate.
+- New Event / New Booking create records in this app only; nothing is ever sent to TicketSource.
 - A daily cron (`wrangler.toml`) prunes expired sessions and rate-limit rows.
 - General API rate limiting is not built in; use a Cloudflare WAF rate-limiting rule if you need it.
