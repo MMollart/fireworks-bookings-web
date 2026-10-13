@@ -869,7 +869,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     let seen = 0;
     try {
       for (let step = 0; step < 2000; step++) {
-        const r = await tsPost(`/api/ticketsource/events/${encodeURIComponent(eventId)}/sync`, { mode: mode || undefined, start: step === 0 });
+        let r;
+        for (let attempt = 0; ; attempt++) {
+          try {
+            r = await tsPost(`/api/ticketsource/events/${encodeURIComponent(eventId)}/sync`, { mode: mode || undefined, start: step === 0 });
+            break;
+          } catch (err) {
+            // Cloudflare occasionally aborts a step that runs long; progress is saved, so just try the step again.
+            if (attempt >= 4 || !/\(5\d\d\)/.test(err.message)) throw err;
+            tsSetStatus('Syncing...', `Retrying after a temporary error (${attempt + 1}/4)`);
+            await sleep(2000);
+          }
+        }
         imported += r.imported || 0;
         seen += r.seen || 0;
         if (r.done) {

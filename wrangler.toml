@@ -19,6 +19,7 @@ migrations_dir = "migrations"
 [vars]
 NODE_ENV = "production"
 
+
 [triggers]
 crons = ["17 3 * * *"]
 

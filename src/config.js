@@ -19,7 +19,7 @@ export const config = {
   ticketSource: {
     apiKey: '',
     apiUrl: 'https://api.ticketsource.io',
-    stepCalls: 40, // API calls per Worker invocation (Workers limit external subrequests per request)
+    stepCalls: 12, // API calls per Worker invocation: keeps each request's CPU time small (Workers Free caps it)
     callsPerMinute: 200, // self-imposed ceiling, TicketSource allows 240/min
     settlementDays: 14, // an event is treated as settled this long after its last date ends
     eventsTtlMinutes: 60,
@@ -41,7 +41,7 @@ export function initConfig(env = {}) {
   config.ticketSource = {
     apiKey: env.TICKETSOURCE_API_KEY || '',
     apiUrl: env.TICKETSOURCE_API_URL || 'https://api.ticketsource.io',
-    stepCalls: intVar(env.TS_STEP_CALLS, 40),
+    stepCalls: intVar(env.TS_STEP_CALLS, 12),
     callsPerMinute: Math.min(intVar(env.TS_CALLS_PER_MINUTE, 200), 240),
     settlementDays: intVar(env.TS_SETTLEMENT_DAYS, 14),
     eventsTtlMinutes: intVar(env.TS_EVENTS_TTL_MINUTES, 60),
