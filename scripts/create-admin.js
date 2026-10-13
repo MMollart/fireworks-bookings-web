@@ -34,11 +34,11 @@ try {
   if (existing) {
     db.prepare('UPDATE users SET password_hash = ?, salt = ?, role = "admin", is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .run(passwordHash, salt, existing.id);
-    console.log(`✅ Updated existing user "${username}" to role "admin" with new password.`);
+    console.log('✅ Updated existing user to role "admin" with new password.');
   } else {
     db.prepare('INSERT INTO users (username, password_hash, salt, role, is_active) VALUES (?, ?, ?, "admin", 1)')
       .run(username, passwordHash, salt);
-    console.log(`✅ Admin user "${username}" created successfully.`);
+    console.log('✅ Admin user provisioned successfully.');
   }
 } catch (err) {
   console.error('Failed to create admin user:', err.message);
