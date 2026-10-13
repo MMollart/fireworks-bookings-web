@@ -3,21 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fireworks Bookings - Management Portal</title>
+  <title>Lydiard Park Fireworks - Bookings</title>
   <link rel="stylesheet" href="/css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎆</text></svg>">
+  <link rel="icon" type="image/png" href="/images/fireworks-badge.png">
 </head>
 <body>
   <!-- Top App Header -->
   <header class="app-header">
     <div class="header-inner">
       <div class="brand-wrapper">
-        <div class="brand-badge">🎆</div>
+        <img class="brand-logo" src="/images/fireworks-cutout.png" alt="Lydiard Fireworks">
         <div>
-          <div class="brand-title">Fireworks Bookings</div>
-          <div class="brand-subtitle">Scout Group Event Operations</div>
+          <div class="brand-title">Lydiard Park Fireworks</div>
+          <div class="brand-subtitle">Bookings and Check-In</div>
         </div>
       </div>
+      <img class="scouts-mark" src="/images/scouts-white-stacked.png" alt="Swindon Scouts">
       <div class="user-nav">
         <div class="user-badge">
           <span id="navUsername">Loading...</span>
@@ -33,14 +34,14 @@
   <!-- Secondary Tab Navigation -->
   <nav class="app-nav">
     <div class="nav-inner">
-      <a class="nav-tab active" data-tab="overview">📊 Overview</a>
-      <a class="nav-tab" data-tab="events">🎆 Events</a>
-      <a class="nav-tab" data-tab="bookings">🎟️ Bookings</a>
-      <a class="nav-tab" data-tab="tickets">🏷️ Tickets & Check-In</a>
-      <a class="nav-tab" data-tab="customers">👥 Customers</a>
-      <a class="nav-tab" data-tab="reports">📈 Reports & Analysis</a>
-      <a class="nav-tab" data-tab="sync">🔄 TicketSource</a>
-      <a class="nav-tab" data-tab="admin" id="adminTab" style="display: none;">⚙️ Admin</a>
+      <a class="nav-tab active" data-tab="overview">Overview</a>
+      <a class="nav-tab" data-tab="events">Events</a>
+      <a class="nav-tab" data-tab="bookings">Bookings</a>
+      <a class="nav-tab" data-tab="tickets">Tickets & Check-In</a>
+      <a class="nav-tab" data-tab="customers">Customers</a>
+      <a class="nav-tab" data-tab="reports">Reports & Analysis</a>
+      <a class="nav-tab" data-tab="sync">TicketSource</a>
+      <a class="nav-tab" data-tab="admin" id="adminTab" style="display: none;">Admin</a>
     </div>
   </nav>
 
@@ -55,7 +56,7 @@
           <p class="section-desc">Key performance indicators, sales metrics, and capacity utilization</p>
         </div>
         <div class="header-actions">
-          <button class="btn btn-secondary btn-sm" id="refreshDashboardBtn">🔄 Refresh</button>
+          <button class="btn btn-secondary btn-sm" id="refreshDashboardBtn">Refresh</button>
         </div>
       </div>
 
@@ -338,7 +339,7 @@
         </div>
         <div class="header-actions">
           <a href="/api/reports/export.csv" class="btn btn-secondary" download>
-            📥 Export Bookings CSV
+            Export Bookings CSV
           </a>
         </div>
       </div>
@@ -408,7 +409,7 @@
             <option value="settled">Settled</option>
             <option value="archived">Archived</option>
           </select>
-          <button class="btn btn-secondary" id="tsRefreshEventsBtn">↻ Refresh event list</button>
+          <button class="btn btn-primary" id="tsRefreshEventsBtn">↻ Refresh event list</button>
         </div>
       </div>
 

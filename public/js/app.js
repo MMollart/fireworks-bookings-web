@@ -607,8 +607,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (res.status === 200 && data.success) {
         checkInResult.innerHTML = `
-          <div style="background-color: #dcfce7; border: 1px solid #86efac; color: #166534; padding: 1rem; border-radius: 6px;">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">✅ VALID TICKET - ENTRY APPROVED</h4>
+          <div style="background-color: var(--success-bg); border: 1px solid var(--success); color: var(--success); padding: 1rem; border-radius: var(--radius-sm);">
+            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Valid Ticket - Entry Approved</h4>
             <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
             <p style="margin: 0;"><strong>Type:</strong> ${escapeHtml(data.ticket.ticket_type)} (${formatCurrency(data.ticket.price)})</p>
             <p style="margin: 0;"><strong>Event:</strong> ${escapeHtml(data.ticket.event_name || '—')}</p>
@@ -620,8 +620,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadTickets();
       } else if (res.status === 409 && data.ticket?.already_checked_in) {
         checkInResult.innerHTML = `
-          <div style="background-color: #fef3c7; border: 1px solid #fde68a; color: #92400e; padding: 1rem; border-radius: 6px;">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">⚠️ ALREADY CHECKED IN</h4>
+          <div style="background-color: var(--warning-bg); border: 1px solid var(--spark-gold); color: var(--ink); padding: 1rem; border-radius: var(--radius-sm);">
+            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Already Checked In</h4>
             <p style="margin: 0;">This ticket was already scanned at: <strong>${formatDate(data.ticket.checked_in_at)}</strong></p>
             <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
             <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.ticket.booking_reference || '—')}</p>
@@ -630,8 +630,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast('Ticket already checked in!', 'warning');
       } else {
         checkInResult.innerHTML = `
-          <div style="background-color: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; padding: 1rem; border-radius: 6px;">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">❌ INVALID TICKET</h4>
+          <div style="background-color: var(--danger-bg); border: 1px solid var(--danger); color: var(--danger); padding: 1rem; border-radius: var(--radius-sm);">
+            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Invalid Ticket</h4>
             <p style="margin: 0;">${escapeHtml(data.error || data.message || 'Ticket not found or invalid.')}</p>
           </div>
         `;
