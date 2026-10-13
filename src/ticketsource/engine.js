@@ -12,6 +12,7 @@
 import { StepLimit, getState, setState } from './client.js';
 import { refreshDates, eventState } from './events.js';
 import { ingestBooking } from './ingest.js';
+import { randomHex } from '../lib/bytes.js';
 
 const CHECKPOINT_SAFETY_MS = 60_000; // re-check anything updated around scan start (clock skew / in-flight edits)
 
@@ -26,12 +27,13 @@ function dayBefore(iso) {
 }
 
 async function startScan(db, date, mode, now) {
+  const scanId = randomHex(8);
   await db
     .prepare(
-      `UPDATE ts_dates SET scan_state = 'scanning', scan_mode = ?, scan_started_at = ?, scan_next = NULL, scan_seen = 0, scan_imported = 0 WHERE id = ?`
+      `UPDATE ts_dates SET scan_state = 'scanning', scan_mode = ?, scan_started_at = ?, scan_id = ?, scan_next = NULL, scan_seen = 0, scan_imported = 0 WHERE id = ?`
     )
-    .run(mode, new Date(now).toISOString(), date.id);
-  return { ...date, scan_state: 'scanning', scan_mode: mode, scan_started_at: new Date(now).toISOString(), scan_next: null, scan_seen: 0, scan_imported: 0 };
+    .run(mode, new Date(now).toISOString(), scanId, date.id);
+  return { ...date, scan_state: 'scanning', scan_mode: mode, scan_started_at: new Date(now).toISOString(), scan_id: scanId, scan_next: null, scan_seen: 0, scan_imported: 0 };
 }
 
 async function finishScan(db, date, now) {
@@ -121,19 +123,22 @@ export async function syncEventStep(db, client, tsEventId, opts, cfg) {
         if (bookings.length) {
           const ids = bookings.map((b) => b.id);
           const rows = await db
-            .prepare(`SELECT ts_booking_id, ts_updated_at FROM bookings WHERE ts_booking_id IN (${ids.map(() => '?').join(',')})`)
+            .prepare(`SELECT ts_booking_id, ts_updated_at, ts_scan_id FROM bookings WHERE ts_booking_id IN (${ids.map(() => '?').join(',')})`)
             .all(...ids);
-          for (const r of rows) known.set(r.ts_booking_id, r.ts_updated_at);
+          for (const r of rows) known.set(r.ts_booking_id, r);
         }
 
         for (const b of bookings) {
-          const unchanged = known.has(b.id) && known.get(b.id) === (b.attributes?.updated_at || b.attributes?.created_at || null);
+          const have = known.get(b.id);
+          const unchanged = Boolean(have) && have.ts_updated_at === (b.attributes?.updated_at || b.attributes?.created_at || null);
+          // A forced scan re-reads everything, so "already done" means written by THIS scan (resumes must not start the page over).
+          const doneThisScan = Boolean(have) && Boolean(date.scan_id) && have.ts_scan_id === date.scan_id;
           summary.seen++;
-          if (unchanged && !scanForce) {
+          if (scanForce ? doneThisScan : unchanged) {
             summary.skipped++;
             continue;
           }
-          await ingestBooking(db, client, b, { date, now, force: scanForce, customerTtlMs: cfg.customerTtlHours * 3_600_000 });
+          await ingestBooking(db, client, b, { date, now, force: scanForce, scanId: date.scan_id, customerTtlMs: cfg.customerTtlHours * 3_600_000 });
           summary.imported++;
         }
 

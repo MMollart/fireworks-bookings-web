@@ -120,7 +120,7 @@ export async function resolveCustomer(db, client, link, { ttlMs, now, force }) {
  * Returns the booking row id.
  */
 export async function ingestBooking(db, client, booking, ctx) {
-  const { date, now, force, customerTtlMs } = ctx;
+  const { date, now, force, customerTtlMs, scanId = null } = ctx;
   const a = booking.attributes || {};
   const iso = new Date(now).toISOString();
 
@@ -147,19 +147,19 @@ export async function ingestBooking(db, client, booking, ctx) {
     db
       .prepare(
         `INSERT INTO bookings (id, reference, event_id, customer_id, booking_date, status, subtotal, discount_amount, total_price,
-           payment_method, payment_reference, notes, ts_booking_id, ts_updated_at, ts_created_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           payment_method, payment_reference, notes, ts_booking_id, ts_updated_at, ts_created_at, ts_scan_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET reference = excluded.reference, event_id = excluded.event_id, customer_id = excluded.customer_id,
            booking_date = excluded.booking_date, status = excluded.status, subtotal = excluded.subtotal,
            discount_amount = excluded.discount_amount, total_price = excluded.total_price, payment_method = excluded.payment_method,
            payment_reference = excluded.payment_reference, notes = excluded.notes, ts_booking_id = excluded.ts_booking_id,
-           ts_updated_at = excluded.ts_updated_at, ts_created_at = excluded.ts_created_at, updated_at = excluded.updated_at`
+           ts_updated_at = excluded.ts_updated_at, ts_created_at = excluded.ts_created_at, ts_scan_id = excluded.ts_scan_id, updated_at = excluded.updated_at`
       )
       .bind(
         bookingId, a.ref, date.id, customerId, a.created_at || iso, money.status,
         round2(money.total + money.discount), money.discount, money.total,
         method ? `TicketSource ${method}` : 'TicketSource', booking.id, notes,
-        booking.id, a.updated_at || a.created_at || null, a.created_at || null, a.created_at || iso, iso
+        booking.id, a.updated_at || a.created_at || null, a.created_at || null, scanId, a.created_at || iso, iso
       ),
   ];
 

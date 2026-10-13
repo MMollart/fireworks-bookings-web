@@ -203,6 +203,15 @@ describe('TicketSource integration', () => {
     assert.equal(ts.calls.filter((c) => c.startsWith('/customers/')).length, 5);
   });
 
+  test('a forced re-sync with a tiny call budget still completes (progress survives step boundaries)', async () => {
+    await refresh();
+    await runToCompletion('evt-live');
+    const steps = await runToCompletion('evt-live', { mode: 'force' }, { stepCalls: 4 });
+    assert.ok(steps.length > 2, 'needed several steps');
+    assert.equal(steps.at(-1).done, true);
+    assert.equal(steps.reduce((n, x) => n + x.imported, 0), 5); // every booking re-read exactly once
+  });
+
   test('re-importing keeps gate check-in state', async () => {
     await refresh();
     await runToCompletion('evt-live');
