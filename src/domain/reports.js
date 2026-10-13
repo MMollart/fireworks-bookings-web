@@ -158,7 +158,9 @@ export async function exportBookingsCsv(db, options = {}) {
 
   function escapeCsv(value) {
     if (value === null || value === undefined) return '';
-    const str = String(value);
+    let str = String(value);
+    // Neutralise spreadsheet formula injection from user-supplied text.
+    if (/^[=+\-@\t\r]/.test(str) && Number.isNaN(Number(str))) str = `'${str}`;
     if (str.includes(',') || str.includes('"') || str.includes('\n')) {
       return `"${str.replace(/"/g, '""')}"`;
     }

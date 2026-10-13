@@ -6,7 +6,8 @@ export function bookingRoutes() {
   const r = new Hono();
 
   r.get('/', async (c) => {
-    const { eventId, status, search, reference, limit, offset } = c.req.query();
+    const { status, search, reference, limit, offset } = c.req.query();
+    const eventId = c.req.query('eventId') || c.req.query('event_id');
     const bookings = await listBookings(c.get('db'), { eventId, status, search, reference, limit, offset });
     return c.json({ bookings, count: bookings.length });
   });

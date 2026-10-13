@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       error: 'badge-danger',
     };
     const cls = map[status] || 'badge-neutral';
-    return `<span class="badge ${cls}">${status}</span>`;
+    return `<span class="badge ${cls}">${escapeHtml(status)}</span>`;
   }
 
   // ----------------------------------------------------
@@ -192,12 +192,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const rev = data.financials?.gross_revenue || 0;
       const disc = data.financials?.total_discounts || 0;
-      const aov = data.financials?.average_order_value || 0;
+      const aov = data.financials?.aov || 0;
       const bCount = data.financials?.confirmed_bookings || 0;
       const tSold = data.tickets?.tickets_sold || 0;
       const tChecked = data.tickets?.tickets_checked_in || 0;
-      const checkInRate = data.tickets?.check_in_rate_pct || 0;
-      const cCount = data.customers?.total_customers || 0;
+      const checkInRate = data.tickets?.checkInRate || 0;
+      const cCount = data.customers?.total || 0;
 
       document.getElementById('kpiRevenue').textContent = formatCurrency(rev);
       document.getElementById('kpiDiscounts').textContent = `Discounts: ${formatCurrency(disc)}`;
@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <td><strong>${escapeHtml(ev.name)}</strong></td>
           <td>${formatDate(ev.event_date)}</td>
           <td>${escapeHtml(ev.venue || '—')}</td>
-          <td>${ev.capacity}</td>
+          <td>${Number(ev.capacity) || 0}</td>
           <td>${sold}</td>
           <td>
             <div class="progress-bar-bg" title="${pct}% sold">
@@ -261,11 +261,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     tbody.innerHTML = bookings.map(b => `
       <tr>
-        <td><code>${escapeHtml(b.booking_reference)}</code></td>
+        <td><code>${escapeHtml(b.reference)}</code></td>
         <td>${escapeHtml(b.event_name || '—')}</td>
         <td>${escapeHtml(b.customer_name || 'Guest')}</td>
         <td>${b.ticket_count || 0}</td>
-        <td>${formatCurrency(b.total_amount)}</td>
+        <td>${formatCurrency(b.total_price)}</td>
         <td>${formatDate(b.created_at)}</td>
         <td>${getStatusBadge(b.status)}</td>
       </tr>
@@ -305,14 +305,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             <td><strong>${escapeHtml(ev.name)}</strong></td>
             <td>${formatDate(ev.event_date)}</td>
             <td>${escapeHtml(ev.venue || '—')}</td>
-            <td>${ev.gates_open || '—'} / ${ev.display_time || '—'}</td>
-            <td>${ev.capacity}</td>
+            <td>${escapeHtml(ev.gates_open || '—')} / ${escapeHtml(ev.display_time || '—')}</td>
+            <td>${Number(ev.capacity) || 0}</td>
             <td>${sold} (${pct}%)</td>
             <td>${formatCurrency(ev.gross_revenue || 0)}</td>
             <td>${getStatusBadge(ev.status)}</td>
             <td>
-              <button class="btn btn-secondary btn-sm toggle-event-status" data-id="${ev.id}" data-status="${ev.status}">
-                ${ev.status === 'active' ? 'Set Draft' : 'Activate'}
+              <button class="btn btn-secondary btn-sm toggle-event-status" data-id="${escapeHtml(ev.id)}" data-status="${escapeHtml(ev.status)}">
+                ${ev.status === 'active' ? 'Cancel Event' : 'Reactivate'}
               </button>
             </td>
           </tr>
@@ -323,9 +323,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.addEventListener('click', async () => {
           const id = btn.dataset.id;
           const current = btn.dataset.status;
-          const next = current === 'active' ? 'draft' : 'active';
+          const next = current === 'active' ? 'cancelled' : 'active';
           const updateRes = await fetch(`/api/events/${id}`, {
-            method: 'PATCH',
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: next })
           });
@@ -346,7 +346,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bookingEventSelect = document.getElementById('bookingEventSelect');
     const bookingEventFilter = document.getElementById('bookingEventFilter');
 
-    const options = events.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
+    const options = events.map(e => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
     if (bookingEventSelect) {
       bookingEventSelect.innerHTML = options || '<option value="">No events available</option>';
     }
@@ -381,7 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast(data.message || 'Error creating event', 'error');
+        showToast(data.error || data.message || 'Error creating event', 'error');
         return;
       }
 
@@ -422,17 +422,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       tbody.innerHTML = allBookings.map(b => `
         <tr>
-          <td><code>${escapeHtml(b.booking_reference)}</code></td>
+          <td><code>${escapeHtml(b.reference)}</code></td>
           <td>${escapeHtml(b.event_name || '—')}</td>
           <td>${escapeHtml(b.customer_name || 'Guest')}</td>
           <td>${b.ticket_count || 0}</td>
-          <td>${formatCurrency(b.subtotal_amount)}</td>
+          <td>${formatCurrency(b.subtotal)}</td>
           <td>${b.discount_amount > 0 ? `-${formatCurrency(b.discount_amount)}` : '£0.00'}</td>
-          <td><strong>${formatCurrency(b.total_amount)}</strong></td>
+          <td><strong>${formatCurrency(b.total_price)}</strong></td>
           <td><span class="badge badge-neutral">${escapeHtml(b.payment_method || 'other')}</span></td>
           <td>${getStatusBadge(b.status)}</td>
           <td>
-            <button class="btn btn-secondary btn-sm view-booking-btn" data-id="${b.id}">View</button>
+            <button class="btn btn-secondary btn-sm view-booking-btn" data-id="${escapeHtml(b.id)}">View</button>
           </td>
         </tr>
       `).join('');
@@ -462,10 +462,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       const data = await res.json();
       const b = data.booking;
-      const cust = data.customer;
-      const tickets = data.tickets || [];
+      const cust = b.customer;
+      const tickets = b.tickets || [];
 
-      document.getElementById('bookingDetailTitle').textContent = `Booking: ${b.booking_reference}`;
+      document.getElementById('bookingDetailTitle').textContent = `Booking: ${b.reference}`;
 
       let ticketListHtml = tickets.map(t => `
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color);">
@@ -473,7 +473,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <code>${escapeHtml(t.barcode)}</code> — <strong>${escapeHtml(t.ticket_type)}</strong> (${formatCurrency(t.price)})
           </div>
           <div>
-            ${t.checked_in ? `<span class="badge badge-success">Checked in ${formatDate(t.checked_in_at)}</span>` : `<span class="badge badge-neutral">Not checked in</span>`}
+            ${t.is_checked_in ? `<span class="badge badge-success">Checked in ${formatDate(t.checked_in_at)}</span>` : `<span class="badge badge-neutral">Not checked in</span>`}
           </div>
         </div>
       `).join('');
@@ -491,10 +491,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           <h4 style="margin-bottom: 0.5rem; font-size: 1rem;">Order Summary</h4>
           <p><strong>Event:</strong> ${escapeHtml(b.event_name || '—')}</p>
           <p><strong>Status:</strong> ${getStatusBadge(b.status)}</p>
-          <p><strong>Payment Method:</strong> ${escapeHtml(b.payment_method)}</p>
-          <p><strong>Subtotal:</strong> ${formatCurrency(b.subtotal_amount)}</p>
+          <p><strong>Payment Method:</strong> ${escapeHtml(b.payment_method || '—')}</p>
+          <p><strong>Subtotal:</strong> ${formatCurrency(b.subtotal)}</p>
           <p><strong>Discount:</strong> -${formatCurrency(b.discount_amount)} ${b.discount_code ? `(${escapeHtml(b.discount_code)})` : ''}</p>
-          <p><strong>Total:</strong> <strong>${formatCurrency(b.total_amount)}</strong></p>
+          <p><strong>Total:</strong> <strong>${formatCurrency(b.total_price)}</strong></p>
         </div>
 
         <div>
@@ -530,7 +530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const payload = {
-      event_id: Number(eventSelect.value),
+      event_id: eventSelect.value,
       customer: {
         name: document.getElementById('custNameInput').value.trim(),
         email: document.getElementById('custEmailInput').value.trim(),
@@ -550,11 +550,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast(data.message || 'Failed to create booking', 'error');
+        showToast(data.error || data.message || 'Failed to create booking', 'error');
         return;
       }
 
-      showToast(`Booking ${data.booking.booking_reference} created!`, 'success');
+      showToast(`Booking ${data.booking.reference} created!`, 'success');
       closeModal('newBookingModal');
       loadBookings();
     } catch {
@@ -591,8 +591,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">✅ VALID TICKET - ENTRY APPROVED</h4>
             <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
             <p style="margin: 0;"><strong>Type:</strong> ${escapeHtml(data.ticket.ticket_type)} (${formatCurrency(data.ticket.price)})</p>
-            <p style="margin: 0;"><strong>Customer:</strong> ${escapeHtml(data.booking?.customer_name || 'Guest')}</p>
-            <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.booking?.booking_reference || '—')}</p>
+            <p style="margin: 0;"><strong>Event:</strong> ${escapeHtml(data.ticket.event_name || '—')}</p>
+            <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.ticket.booking_reference || '—')}</p>
           </div>
         `;
         showToast('Ticket checked in successfully', 'success');
@@ -604,7 +604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">⚠️ ALREADY CHECKED IN</h4>
             <p style="margin: 0;">This ticket was already scanned at: <strong>${formatDate(data.ticket.checked_in_at)}</strong></p>
             <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
-            <p style="margin: 0;"><strong>Customer:</strong> ${escapeHtml(data.booking?.customer_name || 'Guest')}</p>
+            <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.ticket.booking_reference || '—')}</p>
           </div>
         `;
         showToast('Ticket already checked in!', 'warning');
@@ -612,10 +612,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         checkInResult.innerHTML = `
           <div style="background-color: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; padding: 1rem; border-radius: 6px;">
             <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">❌ INVALID TICKET</h4>
-            <p style="margin: 0;">${escapeHtml(data.message || 'Ticket not found or invalid.')}</p>
+            <p style="margin: 0;">${escapeHtml(data.error || data.message || 'Ticket not found or invalid.')}</p>
           </div>
         `;
-        showToast(data.message || 'Invalid barcode', 'error');
+        showToast(data.error || data.message || 'Invalid barcode', 'error');
       }
     } catch {
       checkInResult.innerHTML = `<div class="text-danger">Network error validating barcode.</div>`;
@@ -629,7 +629,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       let url = '/api/tickets?limit=100';
       if (search) url += `&search=${encodeURIComponent(search)}`;
-      if (checkedIn) url += `&checked_in=${encodeURIComponent(checkedIn)}`;
+      if (checkedIn) url += `&isCheckedIn=${encodeURIComponent(checkedIn)}`;
 
       const res = await fetch(url);
       if (!res.ok) return;
@@ -649,7 +649,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <td>${escapeHtml(t.event_name || '—')}</td>
           <td><strong>${escapeHtml(t.ticket_type)}</strong></td>
           <td>${formatCurrency(t.price)}</td>
-          <td>${t.checked_in ? '<span class="badge badge-success">Checked In</span>' : '<span class="badge badge-neutral">Not Used</span>'}</td>
+          <td>${t.is_checked_in ? '<span class="badge badge-success">Checked In</span>' : '<span class="badge badge-neutral">Not Used</span>'}</td>
           <td>${formatDate(t.checked_in_at)}</td>
         </tr>
       `).join('');
@@ -716,9 +716,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           tbody.innerHTML = breakdown.map(item => `
             <tr>
               <td><strong>${escapeHtml(item.ticket_type)}</strong></td>
-              <td>${item.tickets_sold}</td>
+              <td>${item.count}</td>
               <td>${formatCurrency(item.total_revenue)}</td>
-              <td>${item.tickets_checked_in}</td>
+              <td>${item.checked_in_count}</td>
             </tr>
           `).join('');
         }
@@ -768,18 +768,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       const importedCount = document.getElementById('syncImportedCount');
       const completedAt = document.getElementById('syncCompletedAt');
 
-      if (data.configured) {
+      if (data.hasApiKey) {
         modeLabel.textContent = 'Live TicketSource API';
         modeSub.textContent = 'Connected via API key';
       } else {
-        modeLabel.textContent = 'Demo Simulation';
-        modeSub.textContent = 'Simulated batch ingestion mode';
+        modeLabel.textContent = 'Not configured';
+        modeSub.textContent = 'Set TICKETSOURCE_API_KEY to enable sync';
       }
 
-      const cp = data.checkpoint;
+      const cp = data.latestCheckpoint;
       if (cp) {
         statusLabel.textContent = cp.status.toUpperCase();
-        cursorLabel.textContent = `Cursor: ${cp.last_sync_cursor || 'None'}`;
+        cursorLabel.textContent = `Cursor: ${cp.cursor || 'None'}`;
         importedCount.textContent = cp.records_imported || 0;
         completedAt.textContent = formatDate(cp.completed_at || cp.started_at);
       } else {
@@ -789,7 +789,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         completedAt.textContent = 'Never';
       }
 
-      const logs = data.recent_logs || [];
+      const logs = data.recentLogs || [];
       const tbody = document.querySelector('#syncLogsTable tbody');
       if (!logs.length) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No sync activity logged yet.</td></tr>';
@@ -798,8 +798,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           <tr>
             <td>${formatDate(l.created_at)}</td>
             <td><span class="badge ${l.action === 'error' ? 'badge-danger' : 'badge-neutral'}">${escapeHtml(l.action)}</span></td>
-            <td><code>${escapeHtml(l.entity_reference || '—')}</code></td>
-            <td>${escapeHtml(l.details || '—')}</td>
+            <td><code>${escapeHtml(l.reference || '—')}</code></td>
+            <td>${escapeHtml(l.message || '—')}</td>
           </tr>
         `).join('');
       }
@@ -816,10 +816,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const res = await fetch('/api/sync/trigger', { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) {
-        showToast(data.message || 'Sync failed', 'error');
+      if (!res.ok || !data.success) {
+        showToast(data.error || data.message || 'Sync failed', 'error');
+        loadSync();
       } else {
-        showToast(`Sync completed! ${data.result?.imported || 0} records imported.`, 'success');
+        showToast(`Sync completed! ${data.importedCount || 0} records imported.`, 'success');
         loadSync();
       }
     } catch {
@@ -920,7 +921,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast(data.message || 'Error creating user', 'error');
+        showToast(data.error || data.message || 'Error creating user', 'error');
         return;
       }
 
@@ -945,7 +946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast(data.message || 'Failed to reset password', 'error');
+        showToast(data.error || data.message || 'Failed to reset password', 'error');
         return;
       }
 
