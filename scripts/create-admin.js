@@ -1,48 +1,35 @@
 #!/usr/bin/env node
 /**
- * CLI script to create an administrator user account.
- * Usage:
- *   node scripts/create-admin.js [username] [password]
+ * Create (or reset) an administrator in a D1 database.
+ *
+ *   node scripts/create-admin.js <username> <password> [--local]
+ *
+ * Hashes the password here (PBKDF2, same as the Worker) and runs an upsert via
+ * `wrangler d1 execute`. Targets the remote database unless --local is given.
  */
-
-import { getDatabase, closeDatabase } from '../src/db/index.js';
+import { spawnSync } from 'node:child_process';
 import { hashPassword } from '../src/auth/passwords.js';
 
-const username = process.argv[2] || process.env.ADMIN_USERNAME || 'admin';
-const password = process.argv[3] || process.env.ADMIN_PASSWORD;
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const local = process.argv.includes('--local');
+const [username, password] = args;
+const DB_NAME = process.env.D1_DATABASE_NAME || 'fireworks_bookings_d1';
 
-if (!password) {
-  console.error('Error: Password is required.');
-  console.log('Usage: node scripts/create-admin.js <username> <password>');
-  console.log('Or define ADMIN_USERNAME and ADMIN_PASSWORD in your .env file.');
+if (!username || !password || password.length < 8 || !/^[A-Za-z0-9._-]{3,64}$/.test(username)) {
+  console.error('Usage: node scripts/create-admin.js <username> <password (8+ chars)> [--local]');
+  console.error('Username may contain letters, digits, ., _ and - only.');
   process.exit(1);
 }
 
-if (password.length < 8) {
-  console.error('Error: Password must be at least 8 characters long.');
-  process.exit(1);
-}
+const hash = await hashPassword(password);
+const now = new Date().toISOString();
+const sql =
+  `INSERT INTO users (username, password_hash, salt, role, is_active, created_at, updated_at) ` +
+  `VALUES ('${username}', '${hash}', '', 'admin', 1, '${now}', '${now}') ` +
+  `ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, role = 'admin', is_active = 1, updated_at = excluded.updated_at;`;
 
-const db = getDatabase();
-
-try {
-  const existing = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username);
-  const passwordHash = hashPassword(password);
-  const parts = passwordHash.split(':');
-  const salt = parts[1] || '';
-
-  if (existing) {
-    db.prepare('UPDATE users SET password_hash = ?, salt = ?, role = "admin", is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(passwordHash, salt, existing.id);
-    console.log('✅ Updated existing user to role "admin" with new password.');
-  } else {
-    db.prepare('INSERT INTO users (username, password_hash, salt, role, is_active) VALUES (?, ?, ?, "admin", 1)')
-      .run(username, passwordHash, salt);
-    console.log('✅ Admin user provisioned successfully.');
-  }
-} catch (err) {
-  console.error('Failed to create admin user:', err.message);
-  process.exit(1);
-} finally {
-  closeDatabase();
-}
+const res = spawnSync('npx', ['wrangler', 'd1', 'execute', DB_NAME, local ? '--local' : '--remote', '--command', sql], {
+  stdio: 'inherit',
+});
+if (res.status === 0) console.log(`Admin '${username}' is ready (${local ? 'local' : 'remote'}).`);
+process.exit(res.status ?? 1);

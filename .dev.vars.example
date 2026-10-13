@@ -1,0 +1,6 @@
+# Copy to .dev.vars for `npm run dev` (local only; never commit .dev.vars)
+NODE_ENV=development
+ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+ADMIN_INITIAL_USERNAME=admin
+ADMIN_INITIAL_PASSWORD=ChangeMeNow123!
+TICKETSOURCE_WEBHOOK_SECRET=dev-webhook-secret

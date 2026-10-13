@@ -1,6 +1,6 @@
-import crypto from 'node:crypto';
+import { randomHex } from '../lib/bytes.js';
 
-export function listEvents(db, filters = {}) {
+export async function listEvents(db, filters = {}) {
   let sql = `
     SELECT 
       e.*,
@@ -25,7 +25,7 @@ export function listEvents(db, filters = {}) {
 
   sql += ' GROUP BY e.id ORDER BY e.event_date ASC';
 
-  const rows = db.prepare(sql).all(...params);
+  const rows = await db.prepare(sql).all(...params);
   return rows.map((row) => ({
     ...row,
     occupancy_pct: row.capacity > 0 ? Math.min(100, Math.round((row.tickets_sold / row.capacity) * 100)) : 0,
@@ -33,12 +33,12 @@ export function listEvents(db, filters = {}) {
   }));
 }
 
-export function getEventById(db, id) {
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
+export async function getEventById(db, id) {
+  const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(id);
   if (!event) return null;
 
   // Aggregated stats
-  const stats = db.prepare(`
+  const stats = await db.prepare(`
     SELECT 
       COUNT(DISTINCT b.id) AS confirmed_bookings,
       COUNT(t.id) AS tickets_sold,
@@ -50,7 +50,7 @@ export function getEventById(db, id) {
   `).get(id);
 
   // Breakdown by ticket type
-  const ticketTypes = db.prepare(`
+  const ticketTypes = await db.prepare(`
     SELECT t.ticket_type, COUNT(t.id) AS count, COALESCE(SUM(t.price), 0) AS revenue
     FROM tickets t
     JOIN bookings b ON t.booking_id = b.id
@@ -73,8 +73,8 @@ export function getEventById(db, id) {
   };
 }
 
-export function createEvent(db, data) {
-  const id = data.id || `evt_${crypto.randomBytes(6).toString('hex')}`;
+export async function createEvent(db, data) {
+  const id = data.id || `evt_${randomHex(6)}`;
   const now = new Date().toISOString();
   const slug = data.slug || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
@@ -83,7 +83,7 @@ export function createEvent(db, data) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  stmt.run(
+  await stmt.run(
     id,
     data.name,
     slug,
@@ -101,8 +101,8 @@ export function createEvent(db, data) {
   return getEventById(db, id);
 }
 
-export function updateEvent(db, id, data) {
-  const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(id);
+export async function updateEvent(db, id, data) {
+  const existing = await db.prepare('SELECT * FROM events WHERE id = ?').get(id);
   if (!existing) return null;
 
   const now = new Date().toISOString();
@@ -113,7 +113,7 @@ export function updateEvent(db, id, data) {
     WHERE id = ?
   `);
 
-  stmt.run(
+  await stmt.run(
     data.name !== undefined ? data.name : existing.name,
     data.venue !== undefined ? data.venue : existing.venue,
     data.event_date !== undefined ? data.event_date : existing.event_date,
@@ -129,13 +129,13 @@ export function updateEvent(db, id, data) {
   return getEventById(db, id);
 }
 
-export function deleteEvent(db, id) {
-  const bookingCount = db.prepare('SELECT COUNT(*) AS count FROM bookings WHERE event_id = ?').get(id);
+export async function deleteEvent(db, id) {
+  const bookingCount = await db.prepare('SELECT COUNT(*) AS count FROM bookings WHERE event_id = ?').get(id);
   if (bookingCount.count > 0) {
     throw new Error('Cannot delete event with existing bookings');
   }
   const stmt = db.prepare('DELETE FROM events WHERE id = ?');
-  const result = stmt.run(id);
+  const result = await stmt.run(id);
   return result.changes > 0;
 }
 

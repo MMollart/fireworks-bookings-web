@@ -1,106 +1,85 @@
-import crypto from 'node:crypto';
-import { upsertCustomer, getCustomerById } from './customers.js';
-import { getDiscountByCode, calculateDiscount, recordDiscountUsage } from './discounts.js';
-import { createTicket } from './tickets.js';
+import { randomHex, randomInt } from '../lib/bytes.js';
+import { upsertCustomer } from './customers.js';
+import { getDiscountByCode, calculateDiscount, buildDiscountUsageUpdate } from './discounts.js';
+import { buildTicketInsert } from './tickets.js';
 import { decrypt } from '../crypto/encryption.js';
 
-export function createBooking(db, data) {
+export async function createBooking(db, data) {
   const eventId = data.eventId || data.event_id;
-  if (!eventId) {
-    throw new Error('Event ID is required');
-  }
-  if (!data.customer || !data.customer.email) {
-    throw new Error('Customer information with valid email is required');
-  }
+  if (!eventId) throw new Error('Event ID is required');
+  if (!data.customer || !data.customer.email) throw new Error('Customer information with valid email is required');
   if (!data.tickets || !Array.isArray(data.tickets) || data.tickets.length === 0) {
     throw new Error('At least one ticket is required for booking');
   }
 
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
-  if (!event) {
-    throw new Error('Event not found');
-  }
+  const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+  if (!event) throw new Error('Event not found');
 
   // Upsert customer (personal data encrypted at rest)
-  const customer = upsertCustomer(db, data.customer);
+  const customer = await upsertCustomer(db, data.customer);
 
-  // Calculate ticket subtotal
   let subtotal = 0;
-  for (const t of data.tickets) {
-    subtotal += parseFloat(t.price || 0);
-  }
+  for (const t of data.tickets) subtotal += parseFloat(t.price || 0);
 
-  // Handle discount code if supplied
   let discountCodeId = null;
   let discountAmount = 0;
   const rawDiscountCode = data.discountCode || data.discount_code;
   if (rawDiscountCode) {
-    const discount = getDiscountByCode(db, rawDiscountCode);
+    const discount = await getDiscountByCode(db, rawDiscountCode);
     if (discount && discount.is_active) {
       discountCodeId = discount.id;
-      const calc = calculateDiscount(discount, subtotal);
-      discountAmount = typeof calc === 'number' ? calc : (calc?.discountAmount ?? 0);
+      discountAmount = calculateDiscount(discount, subtotal).discountAmount;
     }
   }
 
   const totalPrice = Math.max(0, parseFloat((subtotal - discountAmount).toFixed(2)));
-  const bookingId = data.id || `bk_${crypto.randomBytes(6).toString('hex')}`;
-  const reference = data.reference || data.booking_reference || `FB-${Math.floor(100000 + Math.random() * 900000)}`;
+  const bookingId = data.id || `bk_${randomHex(6)}`;
+  const reference = data.reference || data.booking_reference || `FB-${randomInt(100000, 1000000)}`;
   const now = new Date().toISOString();
   const bookingDate = data.bookingDate || data.booking_date || now;
   const status = data.status || 'confirmed';
 
-  // Insert booking
-  const insertBooking = db.prepare(`
-    INSERT INTO bookings (
-      id, reference, event_id, customer_id, booking_date, status,
-      subtotal, discount_code_id, discount_amount, total_price,
-      payment_method, payment_reference, notes, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  // D1 has no interactive transactions: booking, tickets and discount usage go in one atomic batch.
+  const statements = [
+    db
+      .prepare(
+        `INSERT INTO bookings (
+           id, reference, event_id, customer_id, booking_date, status,
+           subtotal, discount_code_id, discount_amount, total_price,
+           payment_method, payment_reference, notes, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        bookingId, reference, eventId, customer.id, bookingDate, status,
+        subtotal, discountCodeId, discountAmount, totalPrice,
+        data.paymentMethod || data.payment_method || 'card',
+        data.paymentReference || data.payment_reference || null,
+        data.notes || null, now, now
+      ),
+  ];
 
-  insertBooking.run(
-    bookingId,
-    reference,
-    eventId,
-    customer.id,
-    bookingDate,
-    status,
-    subtotal,
-    discountCodeId,
-    discountAmount,
-    totalPrice,
-    data.paymentMethod || data.payment_method || 'card',
-    data.paymentReference || data.payment_reference || null,
-    data.notes || null,
-    now,
-    now
-  );
-
-  // Insert tickets
-  const createdTickets = [];
   for (const t of data.tickets) {
-    const ticket = createTicket(db, {
-      booking_id: bookingId,
-      event_id: eventId,
-      ticket_type: t.ticketType || t.ticket_type || 'Standard',
-      price: t.price || 0,
-      barcode: t.barcode,
-    });
-    createdTickets.push(ticket);
+    statements.push(
+      buildTicketInsert(db, {
+        booking_id: bookingId,
+        event_id: eventId,
+        ticket_type: t.ticketType || t.ticket_type || 'Standard',
+        price: t.price || 0,
+        barcode: t.barcode,
+      }).stmt
+    );
   }
 
-  // If confirmed and had discount, record usage
-  if (status === 'confirmed' && (discountCodeId || rawDiscountCode)) {
-    recordDiscountUsage(db, discountCodeId || rawDiscountCode, discountAmount, totalPrice);
+  if (status === 'confirmed' && discountCodeId) {
+    statements.push(buildDiscountUsageUpdate(db, discountCodeId, discountAmount, totalPrice));
   }
 
-  const result = getBookingById(db, bookingId);
+  await db.batch(statements);
+
+  const result = await getBookingById(db, bookingId);
   result.booking_reference = result.reference;
   result.subtotal_amount = result.subtotal;
   result.total_amount = result.total_price;
-  result.tickets = createdTickets;
   result.booking = {
     ...result,
     booking_reference: result.reference,
@@ -110,8 +89,8 @@ export function createBooking(db, data) {
   return result;
 }
 
-export function getBookingById(db, id) {
-  const row = db.prepare(`
+export async function getBookingById(db, id) {
+  const row = await db.prepare(`
     SELECT 
       b.*,
       e.name AS event_name, e.event_date, e.venue AS event_venue,
@@ -126,7 +105,7 @@ export function getBookingById(db, id) {
 
   if (!row) return null;
 
-  const tickets = db.prepare('SELECT * FROM tickets WHERE booking_id = ?').all(id);
+  const tickets = await db.prepare('SELECT * FROM tickets WHERE booking_id = ?').all(id);
 
   return {
     id: row.id,
@@ -139,10 +118,10 @@ export function getBookingById(db, id) {
     customer_id: row.customer_id,
     customer: {
       id: row.customer_id,
-      name: decrypt(row.name_encrypted),
-      email: decrypt(row.email_encrypted),
-      phone: decrypt(row.phone_encrypted),
-      postcode: decrypt(row.postcode_encrypted),
+      name: await decrypt(row.name_encrypted),
+      email: await decrypt(row.email_encrypted),
+      phone: await decrypt(row.phone_encrypted),
+      postcode: await decrypt(row.postcode_encrypted),
     },
     booking_date: row.booking_date,
     status: row.status,
@@ -161,7 +140,7 @@ export function getBookingById(db, id) {
   };
 }
 
-export function listBookings(db, options = {}) {
+export async function listBookings(db, options = {}) {
   let sql = `
     SELECT 
       b.*,
@@ -183,6 +162,10 @@ export function listBookings(db, options = {}) {
     where.push('b.event_id = ?');
     params.push(options.eventId);
   }
+  if (options.customerId) {
+    where.push('b.customer_id = ?');
+    params.push(options.customerId);
+  }
   if (options.status) {
     where.push('b.status = ?');
     params.push(options.status);
@@ -198,19 +181,19 @@ export function listBookings(db, options = {}) {
 
   sql += ' GROUP BY b.id ORDER BY b.booking_date DESC';
 
-  const rows = db.prepare(sql).all(...params);
+  const rows = await db.prepare(sql).all(...params);
 
   // Decrypt customer fields in-memory for authorized viewing
-  let bookings = rows.map((row) => ({
+  let bookings = await Promise.all(rows.map(async (row) => ({
     id: row.id,
     reference: row.reference,
     event_id: row.event_id,
     event_name: row.event_name,
     customer_id: row.customer_id,
-    customer_name: decrypt(row.name_encrypted),
-    customer_email: decrypt(row.email_encrypted),
-    customer_phone: decrypt(row.phone_encrypted),
-    customer_postcode: decrypt(row.postcode_encrypted),
+    customer_name: await decrypt(row.name_encrypted),
+    customer_email: await decrypt(row.email_encrypted),
+    customer_phone: await decrypt(row.phone_encrypted),
+    customer_postcode: await decrypt(row.postcode_encrypted),
     booking_date: row.booking_date,
     status: row.status,
     subtotal: row.subtotal,
@@ -220,7 +203,7 @@ export function listBookings(db, options = {}) {
     payment_method: row.payment_method,
     ticket_count: row.ticket_count,
     created_at: row.created_at,
-  }));
+  })));
 
   if (options.search) {
     const q = options.search.toLowerCase();
@@ -238,7 +221,7 @@ export function listBookings(db, options = {}) {
   return bookings.slice(offset, offset + limit);
 }
 
-export function updateBookingStatus(db, id, newStatus) {
+export async function updateBookingStatus(db, id, newStatus) {
   const validStatuses = ['confirmed', 'pending', 'cancelled', 'refunded'];
   if (!validStatuses.includes(newStatus)) {
     throw new Error(`Invalid status: ${newStatus}`);
@@ -250,7 +233,7 @@ export function updateBookingStatus(db, id, newStatus) {
     SET status = ?, updated_at = ?
     WHERE id = ?
   `);
-  stmt.run(newStatus, now, id);
+  await stmt.run(newStatus, now, id);
 
   return getBookingById(db, id);
 }

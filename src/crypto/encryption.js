@@ -1,86 +1,66 @@
-import crypto from 'node:crypto';
 import { config } from '../config.js';
+import { toHex, fromHex, randomHex } from '../lib/bytes.js';
 
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12; // Standard 96-bit IV for GCM
+const IV_LENGTH = 12; // 96-bit IV for GCM
+const TAG_BYTES = 16;
+const enc = new TextEncoder();
+const dec = new TextDecoder();
 
-/**
- * Encrypts a plaintext string using AES-256-GCM.
- * Stored format: <iv_hex>:<auth_tag_hex>:<ciphertext_hex>
- */
-export function encrypt(plaintext, customKey = null) {
-  if (plaintext === null || plaintext === undefined) {
-    return null;
+const keyCache = new Map();
+
+function importKey(hex, algorithm, usages) {
+  const id = `${algorithm.name}:${usages.join()}:${hex}`;
+  if (!keyCache.has(id)) {
+    keyCache.set(id, crypto.subtle.importKey('raw', fromHex(hex), algorithm, false, usages));
   }
-  const text = String(plaintext);
-  if (text.length === 0) {
-    return '';
-  }
-
-  const key = customKey || config.encryptionKey;
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+  return keyCache.get(id);
 }
 
 /**
- * Decrypts an AES-256-GCM encrypted string.
+ * AES-256-GCM. Stored format: <iv_hex>:<auth_tag_hex>:<ciphertext_hex>
+ * (WebCrypto appends the tag to the ciphertext; we split it back out so the
+ * stored format is unchanged from the original Node implementation.)
  */
-export function decrypt(encryptedString, customKey = null) {
-  if (encryptedString === null || encryptedString === undefined) {
-    return null;
-  }
-  if (encryptedString === '') {
-    return '';
-  }
+export async function encrypt(plaintext, customKeyHex = null) {
+  if (plaintext === null || plaintext === undefined) return null;
+  const text = String(plaintext);
+  if (text.length === 0) return '';
+
+  const key = await importKey(customKeyHex || config.encryptionKeyHex, { name: 'AES-GCM' }, ['encrypt']);
+  const iv = fromHex(randomHex(IV_LENGTH));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text)));
+  const ciphertext = sealed.slice(0, sealed.length - TAG_BYTES);
+  const tag = sealed.slice(sealed.length - TAG_BYTES);
+  return `${toHex(iv)}:${toHex(tag)}:${toHex(ciphertext)}`;
+}
+
+export async function decrypt(encryptedString, customKeyHex = null) {
+  if (encryptedString === null || encryptedString === undefined) return null;
+  if (encryptedString === '') return '';
 
   const parts = encryptedString.split(':');
-  if (parts.length !== 3) {
-    // If not in encrypted format (e.g. legacy/plain), return safely
-    return encryptedString;
-  }
-
-  const [ivHex, tagHex, dataHex] = parts;
-  const key = customKey || config.encryptionKey;
+  if (parts.length !== 3) return encryptedString; // legacy/plain value
 
   try {
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(tagHex, 'hex');
-    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-    decipher.setAuthTag(authTag);
-
-    let decrypted = decipher.update(dataHex, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+    const [ivHex, tagHex, dataHex] = parts;
+    const key = await importKey(customKeyHex || config.encryptionKeyHex, { name: 'AES-GCM' }, ['decrypt']);
+    const sealed = new Uint8Array([...fromHex(dataHex), ...fromHex(tagHex)]);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromHex(ivHex) }, key, sealed);
+    return dec.decode(plain);
   } catch (err) {
     throw new Error(`Failed to decrypt data: ${err.message}`);
   }
 }
 
-/**
- * Computes a deterministic HMAC-SHA256 blind index for exact search and indexing.
- * Input is normalized (lowercased and trimmed).
- */
-export function blindIndex(plaintext, customKey = null) {
-  if (plaintext === null || plaintext === undefined) {
-    return null;
-  }
+/** Deterministic HMAC-SHA256 blind index over the trimmed, lower-cased input. */
+export async function blindIndex(plaintext, customKeyHex = null) {
+  if (plaintext === null || plaintext === undefined) return null;
   const normalized = String(plaintext).trim().toLowerCase();
-  if (normalized.length === 0) {
-    return '';
-  }
-  const key = customKey || config.encryptionKey;
-  return crypto.createHmac('sha256', key).update(normalized).digest('hex');
+  if (normalized.length === 0) return '';
+  const key = await importKey(customKeyHex || config.encryptionKeyHex, { name: 'HMAC', hash: 'SHA-256' }, ['sign']);
+  return toHex(await crypto.subtle.sign('HMAC', key, enc.encode(normalized)));
 }
 
-/**
- * Utility to partially mask sensitive data (e.g., for display/audit logs).
- */
 export function maskEmail(email) {
   if (!email || typeof email !== 'string') return '';
   const [local, domain] = email.split('@');
@@ -95,16 +75,7 @@ export function maskPhone(phone) {
   return '•'.repeat(phone.length - 4) + phone.slice(-4);
 }
 
-// Aliases
 export const encryptField = encrypt;
 export const decryptField = decrypt;
 
-export default {
-  encrypt,
-  decrypt,
-  blindIndex,
-  maskEmail,
-  maskPhone,
-  encryptField,
-  decryptField,
-};
+export default { encrypt, decrypt, blindIndex, maskEmail, maskPhone, encryptField, decryptField };

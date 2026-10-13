@@ -1,18 +1,29 @@
 name = "fireworks-bookings-web"
-main = "src/server.js"
-compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
 
 [assets]
 directory = "./public"
 binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
+# Everything except css/js/_headers goes through the Worker so pages are auth-gated.
+run_worker_first = ["/", "/dashboard", "/login", "/index.html", "/login.html", "/api/*", "/health"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "fireworks_bookings_d1"
-database_id = "your-d1-database-id-here"
+database_id = "ece2d99e-2997-4b1e-b216-a3369e9f1dde"
+migrations_dir = "migrations"
 
 [vars]
 NODE_ENV = "production"
-APP_NAME = "Fireworks Bookings"
-SESSION_COOKIE_NAME = "fb_session"
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[observability]
+enabled = true
+
+# Secrets (set with `wrangler secret put`): ENCRYPTION_KEY, ADMIN_INITIAL_PASSWORD,
+# optional: ADMIN_INITIAL_USERNAME, TICKETSOURCE_API_KEY, TICKETSOURCE_WEBHOOK_SECRET

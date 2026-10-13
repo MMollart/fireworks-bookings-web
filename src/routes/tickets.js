@@ -1,13 +1,13 @@
-import express from 'express';
+import { Hono } from 'hono';
+import { requireOperator } from '../auth/middleware.js';
 import { listTickets, getTicketById, getTicketByBarcode, checkInTicket } from '../domain/tickets.js';
 
-export function createTicketRoutes(db) {
-  const router = express.Router();
+export function ticketRoutes() {
+  const r = new Hono();
 
-  // GET /api/tickets
-  router.get('/', (req, res) => {
-    const { eventId, bookingId, ticketType, isCheckedIn, search, limit, offset } = req.query;
-    const tickets = listTickets(db, {
+  r.get('/', async (c) => {
+    const { eventId, bookingId, ticketType, isCheckedIn, search, limit, offset } = c.req.query();
+    const tickets = await listTickets(c.get('db'), {
       eventId,
       bookingId,
       ticketType,
@@ -16,49 +16,28 @@ export function createTicketRoutes(db) {
       limit,
       offset,
     });
-    return res.json({ tickets, count: tickets.length });
+    return c.json({ tickets, count: tickets.length });
   });
 
-  // GET /api/tickets/:id
-  router.get('/:id', (req, res) => {
-    let ticket = getTicketById(db, req.params.id);
-    if (!ticket) {
-      ticket = getTicketByBarcode(db, req.params.id);
-    }
-    if (!ticket) {
-      return res.status(404).json({ error: 'Ticket not found' });
-    }
-    return res.json({ ticket });
-  });
-
-  // POST /api/tickets/checkin and /api/tickets/check-in
-  const handleCheckIn = (req, res) => {
-    if (req.user.role === 'viewer') {
-      return res.status(403).json({ error: 'Permission denied. Operator or admin role required for check-in.' });
-    }
-
-    const { identifier, barcode } = req.body || {};
+  const checkIn = async (c) => {
+    const { identifier, barcode } = await c.req.json().catch(() => ({}));
     const code = barcode || identifier;
-    if (!code) {
-      return res.status(400).json({ error: 'Ticket barcode or ID is required for check-in' });
-    }
+    if (!code) return c.json({ error: 'Ticket barcode or ID is required for check-in' }, 400);
 
-    const result = checkInTicket(db, code);
-    if (!result.success) {
-      if (result.already_checked_in) {
-        return res.status(409).json(result);
-      }
-      return res.status(400).json(result);
-    }
-
-    return res.json(result);
+    const result = await checkInTicket(c.get('db'), code);
+    if (result.success) return c.json(result);
+    return c.json(result, result.already_checked_in ? 409 : 400);
   };
+  r.post('/checkin', requireOperator, checkIn);
+  r.post('/check-in', requireOperator, checkIn);
 
-  router.post('/checkin', handleCheckIn);
-  router.post('/check-in', handleCheckIn);
+  // Registered after the POST routes so '/checkin' is never read as an id.
+  r.get('/:id', async (c) => {
+    const db = c.get('db');
+    const id = c.req.param('id');
+    const ticket = (await getTicketById(db, id)) || (await getTicketByBarcode(db, id));
+    return ticket ? c.json({ ticket }) : c.json({ error: 'Ticket not found' }, 404);
+  });
 
-  return router;
+  return r;
 }
-
-createTicketRoutes.createTicketRoutes = createTicketRoutes;
-export default createTicketRoutes;

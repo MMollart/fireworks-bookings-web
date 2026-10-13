@@ -1,4 +1,4 @@
-import express from 'express';
+import { Hono } from 'hono';
 import {
   getDashboardSummary,
   getDailySalesVelocity,
@@ -7,48 +7,30 @@ import {
   exportBookingsCsv,
 } from '../domain/reports.js';
 
-export function createReportRoutes(db) {
-  const router = express.Router();
+export function reportRoutes() {
+  const r = new Hono();
 
-  // GET /api/reports/dashboard
-  router.get('/dashboard', (req, res) => {
-    const summary = getDashboardSummary(db);
-    return res.json({ ...summary, summary });
+  r.get('/dashboard', async (c) => {
+    const summary = await getDashboardSummary(c.get('db'));
+    return c.json({ ...summary, summary });
   });
 
-  // GET /api/reports/velocity
-  router.get('/velocity', (req, res) => {
-    const { eventId, days } = req.query;
-    const velocity = getDailySalesVelocity(db, { eventId, days });
-    return res.json({ velocity });
+  r.get('/velocity', async (c) => {
+    const { eventId, days } = c.req.query();
+    return c.json({ velocity: await getDailySalesVelocity(c.get('db'), { eventId, days }) });
   });
 
-  // GET /api/reports/discounts
-  router.get('/discounts', (req, res) => {
-    const discounts = getDiscountCodeReport(db);
-    return res.json({ discounts });
+  r.get('/discounts', async (c) => c.json({ discounts: await getDiscountCodeReport(c.get('db')) }));
+
+  r.get('/tickets', async (c) => c.json({ breakdown: await getTicketTypeBreakdown(c.get('db'), c.req.query('eventId')) }));
+
+  r.get('/export.csv', async (c) => {
+    const { eventId, status } = c.req.query();
+    const csv = await exportBookingsCsv(c.get('db'), { eventId, status });
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', `attachment; filename="fireworks-bookings-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return c.body(csv);
   });
 
-  // GET /api/reports/tickets
-  router.get('/tickets', (req, res) => {
-    const { eventId } = req.query;
-    const breakdown = getTicketTypeBreakdown(db, eventId);
-    return res.json({ breakdown });
-  });
-
-  // GET /api/reports/export.csv
-  router.get('/export.csv', (req, res) => {
-    const { eventId, status } = req.query;
-    const csvData = exportBookingsCsv(db, { eventId, status });
-    const filename = `fireworks-bookings-${new Date().toISOString().slice(0, 10)}.csv`;
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.send(csvData);
-  });
-
-  return router;
+  return r;
 }
-
-createReportRoutes.createReportRoutes = createReportRoutes;
-export default createReportRoutes;

@@ -157,3 +157,8 @@ vite.config.ts.timestamp-*
 data/
 .wrangler/
 
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
+.DS_Store

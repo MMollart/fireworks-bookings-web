@@ -2,9 +2,9 @@ import { listBookings } from './bookings.js';
 import { listDiscounts } from './discounts.js';
 import { listEvents } from './events.js';
 
-export function getDashboardSummary(db) {
+export async function getDashboardSummary(db) {
   // Aggregate financial metrics
-  const stats = db.prepare(`
+  const stats = await db.prepare(`
     SELECT 
       COALESCE(SUM(CASE WHEN status = 'confirmed' THEN total_price ELSE 0 END), 0) AS gross_revenue,
       COALESCE(SUM(CASE WHEN status = 'confirmed' THEN discount_amount ELSE 0 END), 0) AS total_discounts,
@@ -17,7 +17,7 @@ export function getDashboardSummary(db) {
   `).get();
 
   // Tickets aggregate
-  const ticketStats = db.prepare(`
+  const ticketStats = await db.prepare(`
     SELECT 
       COUNT(t.id) AS total_tickets_sold,
       SUM(CASE WHEN t.is_checked_in = 1 THEN 1 ELSE 0 END) AS checked_in_count
@@ -27,17 +27,17 @@ export function getDashboardSummary(db) {
   `).get();
 
   // Customer count
-  const customerCount = db.prepare('SELECT COUNT(*) AS count FROM customers').get().count;
+  const customerCount = (await db.prepare('SELECT COUNT(*) AS count FROM customers').get()).count;
 
   // Average Order Value
   const confirmed = stats.confirmed_bookings || 0;
   const aov = confirmed > 0 ? parseFloat((stats.gross_revenue / confirmed).toFixed(2)) : 0;
 
   // Recent 5 bookings
-  const recentBookings = listBookings(db, { limit: 5 });
+  const recentBookings = await listBookings(db, { limit: 5 });
 
   // Events summary
-  const events = listEvents(db);
+  const events = await listEvents(db);
 
   return {
     financials: {
@@ -77,7 +77,7 @@ export function getDashboardSummary(db) {
   };
 }
 
-export function getDailySalesVelocity(db, options = {}) {
+export async function getDailySalesVelocity(db, options = {}) {
   let sql = `
     SELECT 
       SUBSTR(b.booking_date, 1, 10) AS date,
@@ -99,17 +99,17 @@ export function getDailySalesVelocity(db, options = {}) {
 
   if (options.days) {
     const daysLimit = parseInt(options.days, 10);
-    sql += ` LIMIT ${daysLimit}`;
+    sql += ` LIMIT ${Number.isFinite(daysLimit) && daysLimit > 0 ? daysLimit : 365}`;
   }
 
-  return db.prepare(sql).all(...params);
+  return await db.prepare(sql).all(...params);
 }
 
-export function getDiscountCodeReport(db) {
+export async function getDiscountCodeReport(db) {
   return listDiscounts(db);
 }
 
-export function getTicketTypeBreakdown(db, eventId = null) {
+export async function getTicketTypeBreakdown(db, eventId = null) {
   let sql = `
     SELECT 
       t.ticket_type,
@@ -129,11 +129,11 @@ export function getTicketTypeBreakdown(db, eventId = null) {
 
   sql += ' GROUP BY t.ticket_type ORDER BY count DESC';
 
-  return db.prepare(sql).all(...params);
+  return await db.prepare(sql).all(...params);
 }
 
-export function exportBookingsCsv(db, options = {}) {
-  const bookings = listBookings(db, {
+export async function exportBookingsCsv(db, options = {}) {
+  const bookings = await listBookings(db, {
     eventId: options.eventId,
     status: options.status,
     limit: 10000,

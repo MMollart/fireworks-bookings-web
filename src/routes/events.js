@@ -1,89 +1,48 @@
-import express from 'express';
+import { Hono } from 'hono';
+import { requireOperator } from '../auth/middleware.js';
 import { listEvents, getEventById, createEvent, updateEvent, deleteEvent } from '../domain/events.js';
 
-export function createEventRoutes(db) {
-  const router = express.Router();
+export function eventRoutes() {
+  const r = new Hono();
 
-  // GET /api/events
-  router.get('/', (req, res) => {
-    const { status } = req.query;
-    const events = listEvents(db, { status });
-    return res.json({ events });
+  r.get('/', async (c) => c.json({ events: await listEvents(c.get('db'), { status: c.req.query('status') }) }));
+
+  r.get('/:id', async (c) => {
+    const event = await getEventById(c.get('db'), c.req.param('id'));
+    return event ? c.json({ event }) : c.json({ error: 'Event not found' }, 404);
   });
 
-  // GET /api/events/:id
-  router.get('/:id', (req, res) => {
-    const event = getEventById(db, req.params.id);
-    if (!event) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
-    return res.json({ event });
-  });
-
-  // POST /api/events
-  router.post('/', (req, res) => {
-    if (req.user.role === 'viewer') {
-      return res.status(403).json({ error: 'Permission denied. Operator or admin role required.' });
-    }
-
-    const { name, event_date, venue, capacity, description, gates_open, display_time, status } = req.body || {};
-    if (!name || !event_date) {
-      return res.status(400).json({ error: 'Event name and event_date are required' });
-    }
-
+  r.post('/', requireOperator, async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (!body.name || !body.event_date) return c.json({ error: 'Event name and event_date are required' }, 400);
     try {
-      const created = createEvent(db, {
-        name,
-        event_date,
-        venue,
-        capacity,
-        description,
-        gates_open,
-        display_time,
-        status,
-      });
-      return res.status(201).json({ success: true, event: created });
+      const event = await createEvent(c.get('db'), body);
+      return c.json({ success: true, event }, 201);
     } catch (err) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
   });
 
-  // PUT /api/events/:id
-  router.put('/:id', (req, res) => {
-    if (req.user.role === 'viewer') {
-      return res.status(403).json({ error: 'Permission denied. Operator or admin role required.' });
-    }
-
+  r.put('/:id', requireOperator, async (c) => {
     try {
-      const updated = updateEvent(db, req.params.id, req.body || {});
-      if (!updated) {
-        return res.status(404).json({ error: 'Event not found' });
-      }
-      return res.json({ success: true, event: updated });
+      const event = await updateEvent(c.get('db'), c.req.param('id'), await c.req.json().catch(() => ({})));
+      return event ? c.json({ success: true, event }) : c.json({ error: 'Event not found' }, 404);
     } catch (err) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
   });
 
-  // DELETE /api/events/:id
-  router.delete('/:id', (req, res) => {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Permission denied. Admin role required to delete events.' });
+  r.delete('/:id', async (c) => {
+    if (c.get('user').role !== 'admin') {
+      return c.json({ error: 'Permission denied. Admin role required to delete events.' }, 403);
     }
-
     try {
-      const ok = deleteEvent(db, req.params.id);
-      if (!ok) {
-        return res.status(404).json({ error: 'Event not found' });
-      }
-      return res.json({ success: true, message: 'Event deleted successfully' });
+      const ok = await deleteEvent(c.get('db'), c.req.param('id'));
+      return ok ? c.json({ success: true, message: 'Event deleted successfully' }) : c.json({ error: 'Event not found' }, 404);
     } catch (err) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
   });
 
-  return router;
+  return r;
 }
-
-createEventRoutes.createEventRoutes = createEventRoutes;
-export default createEventRoutes;

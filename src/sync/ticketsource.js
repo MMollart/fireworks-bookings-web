@@ -1,6 +1,7 @@
 import { createEvent, updateEvent } from '../domain/events.js';
 import { createBooking, getBookingById, updateBookingStatus } from '../domain/bookings.js';
 import { createDiscount } from '../domain/discounts.js';
+import { config } from '../config.js';
 
 export class TicketSourceSync {
   constructor(db, options = {}) {
@@ -9,7 +10,7 @@ export class TicketSourceSync {
     this.apiUrl = options.apiUrl || 'https://api.ticketsource.co.uk';
   }
 
-  getLatestCheckpoint() {
+  async getLatestCheckpoint() {
     return this.db.prepare(`
       SELECT * FROM sync_checkpoints
       ORDER BY id DESC
@@ -17,17 +18,17 @@ export class TicketSourceSync {
     `).get();
   }
 
-  createCheckpoint(cursor = null) {
+  async createCheckpoint(cursor = null) {
     const now = new Date().toISOString();
     const stmt = this.db.prepare(`
       INSERT INTO sync_checkpoints (source, cursor, status, records_imported, started_at)
       VALUES ('ticketsource', ?, 'in_progress', 0, ?)
     `);
-    const result = stmt.run(cursor, now);
+    const result = await stmt.run(cursor, now);
     return this.db.prepare('SELECT * FROM sync_checkpoints WHERE id = ?').get(result.lastInsertRowid);
   }
 
-  updateCheckpoint(id, updates) {
+  async updateCheckpoint(id, updates) {
     const fields = [];
     const params = [];
 
@@ -55,18 +56,18 @@ export class TicketSourceSync {
     if (fields.length === 0) return;
 
     params.push(id);
-    this.db.prepare(`UPDATE sync_checkpoints SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    await this.db.prepare(`UPDATE sync_checkpoints SET ${fields.join(', ')} WHERE id = ?`).run(...params);
   }
 
-  logSyncAction(checkpointId, action, reference, message) {
+  async logSyncAction(checkpointId, action, reference, message) {
     const now = new Date().toISOString();
-    this.db.prepare(`
+    await this.db.prepare(`
       INSERT INTO sync_logs (checkpoint_id, action, reference, message, created_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(checkpointId, action, reference || null, message || null, now);
   }
 
-  getRecentLogs(limit = 50) {
+  async getRecentLogs(limit = 50) {
     return this.db.prepare(`
       SELECT l.*, c.status AS checkpoint_status
       FROM sync_logs l
@@ -80,23 +81,23 @@ export class TicketSourceSync {
    * Ingests a single standardized TicketSource order/booking object.
    * Handles idempotency (does not duplicate bookings with identical reference).
    */
-  ingestBooking(orderData, checkpointId = null) {
-    const existing = this.db.prepare('SELECT id FROM bookings WHERE reference = ?').get(orderData.reference);
+  async ingestBooking(orderData, checkpointId = null) {
+    const existing = await this.db.prepare('SELECT id, status FROM bookings WHERE reference = ?').get(orderData.reference);
     if (existing) {
       // If status changed, update it
       if (orderData.status && orderData.status !== existing.status) {
-        updateBookingStatus(this.db, existing.id, orderData.status);
+        await updateBookingStatus(this.db, existing.id, orderData.status);
         if (checkpointId) {
-          this.logSyncAction(checkpointId, 'update_booking', orderData.reference, `Updated status to ${orderData.status}`);
+          await this.logSyncAction(checkpointId, 'update_booking', orderData.reference, `Updated status to ${orderData.status}`);
         }
       }
-      return getBookingById(this.db, existing.id);
+      return await getBookingById(this.db, existing.id);
     }
 
     // Ensure event exists
-    let event = this.db.prepare('SELECT id FROM events WHERE id = ?').get(orderData.eventId);
+    let event = await this.db.prepare('SELECT id FROM events WHERE id = ?').get(orderData.eventId);
     if (!event) {
-      event = createEvent(this.db, {
+      event = await createEvent(this.db, {
         id: orderData.eventId,
         name: orderData.eventName || 'Fireworks Night Event',
         venue: orderData.eventVenue || 'Scout Activity Centre',
@@ -104,15 +105,15 @@ export class TicketSourceSync {
         capacity: orderData.eventCapacity || 1000,
       });
       if (checkpointId) {
-        this.logSyncAction(checkpointId, 'import_event', event.id, `Created event ${event.name}`);
+        await this.logSyncAction(checkpointId, 'import_event', event.id, `Created event ${event.name}`);
       }
     }
 
     // Ensure discount code exists if given
     if (orderData.discountCode) {
-      const discount = this.db.prepare('SELECT id FROM discount_codes WHERE UPPER(code) = ?').get(orderData.discountCode.toUpperCase());
+      const discount = await this.db.prepare('SELECT id FROM discount_codes WHERE UPPER(code) = ?').get(orderData.discountCode.toUpperCase());
       if (!discount) {
-        createDiscount(this.db, {
+        await createDiscount(this.db, {
           code: orderData.discountCode,
           description: `Imported TicketSource Promo ${orderData.discountCode}`,
           discount_type: orderData.discountType || 'fixed',
@@ -121,7 +122,7 @@ export class TicketSourceSync {
       }
     }
 
-    const booking = createBooking(this.db, {
+    const booking = await createBooking(this.db, {
       reference: orderData.reference,
       eventId: orderData.eventId,
       bookingDate: orderData.bookingDate,
@@ -135,7 +136,7 @@ export class TicketSourceSync {
     });
 
     if (checkpointId) {
-      this.logSyncAction(
+      await this.logSyncAction(
         checkpointId,
         'import_booking',
         booking.reference,
@@ -151,10 +152,10 @@ export class TicketSourceSync {
    * Continues from previous checkpoint cursor if available.
    */
   async runSync(options = {}) {
-    const lastCheckpoint = this.getLatestCheckpoint();
+    const lastCheckpoint = await this.getLatestCheckpoint();
     const resumeCursor = options.cursor || (lastCheckpoint && lastCheckpoint.status === 'completed' ? lastCheckpoint.cursor : null);
 
-    const checkpoint = this.createCheckpoint(resumeCursor);
+    const checkpoint = await this.createCheckpoint(resumeCursor);
     let importedCount = 0;
 
     try {
@@ -165,21 +166,21 @@ export class TicketSourceSync {
       });
 
       for (const order of batch.records) {
-        this.ingestBooking(order, checkpoint.id);
+        await this.ingestBooking(order, checkpoint.id);
         importedCount++;
       }
 
       const nextCursor = batch.nextCursor || new Date().toISOString();
       const completedAt = new Date().toISOString();
 
-      this.updateCheckpoint(checkpoint.id, {
+      await this.updateCheckpoint(checkpoint.id, {
         status: 'completed',
         cursor: nextCursor,
         records_imported: importedCount,
         completed_at: completedAt,
       });
 
-      this.logSyncAction(
+      await this.logSyncAction(
         checkpoint.id,
         'sync_completed',
         `Cursor: ${nextCursor}`,
@@ -194,14 +195,14 @@ export class TicketSourceSync {
         hasMore: Boolean(batch.hasMore),
       };
     } catch (err) {
-      this.updateCheckpoint(checkpoint.id, {
+      await this.updateCheckpoint(checkpoint.id, {
         status: 'failed',
         error_message: err.message,
         records_imported: importedCount,
         completed_at: new Date().toISOString(),
       });
 
-      this.logSyncAction(checkpoint.id, 'error', null, `Sync failed: ${err.message}`);
+      await this.logSyncAction(checkpoint.id, 'error', null, `Sync failed: ${err.message}`);
 
       return {
         success: false,
@@ -242,7 +243,12 @@ export class TicketSourceSync {
       return this.transformTicketSourceApiResponse(data);
     }
 
-    // Simulated ingestion data (realistic Fireworks bookings)
+    // Never fabricate bookings in production.
+    if (config.isProd) {
+      throw new Error('TICKETSOURCE_API_KEY is not configured; sync is unavailable');
+    }
+
+    // Simulated ingestion data (dev/demo only)
     return this.generateSimulatedBatch(cursor, limit);
   }
 
@@ -384,8 +390,8 @@ export function generateSimulatedBatch(limit = 5) {
   return records;
 }
 
-export function getSyncStatus(db) {
-  const row = db.prepare('SELECT * FROM sync_checkpoints ORDER BY id DESC LIMIT 1').get();
+export async function getSyncStatus(db) {
+  const row = await db.prepare('SELECT * FROM sync_checkpoints ORDER BY id DESC LIMIT 1').get();
   if (!row) {
     return { checkpoint: null, status: 'idle' };
   }
@@ -407,13 +413,13 @@ export async function runSync(db, options = {}) {
     INSERT INTO sync_checkpoints (source, cursor, last_sync_cursor, status, records_imported, started_at)
     VALUES ('ticketsource', NULL, NULL, 'in_progress', 0, ?)
   `);
-  const res = insertStmt.run(now);
+  const res = await insertStmt.run(now);
   const checkpointId = res.lastInsertRowid;
 
   // Find or create default event
-  let event = db.prepare('SELECT id FROM events LIMIT 1').get();
+  let event = await db.prepare('SELECT id FROM events LIMIT 1').get();
   if (!event) {
-    event = createEvent(db, {
+    event = await createEvent(db, {
       name: 'Default Fireworks Night',
       event_date: '2026-11-05 19:30:00',
       capacity: 1000,
@@ -422,9 +428,9 @@ export async function runSync(db, options = {}) {
 
   let imported = 0;
   for (const order of batch) {
-    const existing = db.prepare('SELECT id FROM bookings WHERE reference = ?').get(order.reference);
+    const existing = await db.prepare('SELECT id FROM bookings WHERE reference = ?').get(order.reference);
     if (!existing) {
-      createBooking(db, {
+      await createBooking(db, {
         event_id: order.eventId || order.event_id || event.id,
         reference: order.reference,
         customer: order.customer,
@@ -441,7 +447,7 @@ export async function runSync(db, options = {}) {
 
   const cursor = `ts_cursor_${Date.now()}`;
   const completedAt = new Date().toISOString();
-  db.prepare(`
+  await db.prepare(`
     UPDATE sync_checkpoints
     SET status = 'completed', records_imported = ?, cursor = ?, last_sync_cursor = ?, completed_at = ?
     WHERE id = ?
@@ -461,7 +467,7 @@ export async function ingestWebhookEvent(db, webhookPayload) {
     throw new Error('Invalid webhook payload: reference required');
   }
 
-  const existing = db.prepare('SELECT id FROM bookings WHERE reference = ?').get(data.reference);
+  const existing = await db.prepare('SELECT id FROM bookings WHERE reference = ?').get(data.reference);
   if (existing) {
     return {
       status: 'already_processed',
@@ -469,16 +475,16 @@ export async function ingestWebhookEvent(db, webhookPayload) {
     };
   }
 
-  let event = db.prepare('SELECT id FROM events LIMIT 1').get();
+  let event = await db.prepare('SELECT id FROM events LIMIT 1').get();
   if (!event) {
-    event = createEvent(db, {
+    event = await createEvent(db, {
       name: 'Default Fireworks Night',
       event_date: '2026-11-05 19:30:00',
       capacity: 1000,
     });
   }
 
-  const booking = createBooking(db, {
+  const booking = await createBooking(db, {
     event_id: data.eventId || data.event_id || event.id,
     reference: data.reference,
     customer: data.customer,

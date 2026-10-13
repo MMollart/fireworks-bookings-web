@@ -1,123 +1,83 @@
 /**
- * Express application factory.
- * Configures middleware, security, routes, and error handling.
+ * Hono application factory.
+ *
+ * `getDb(c)` supplies the async db handle: the Worker passes a D1 wrapper
+ * built from c.env.DB; tests pass an in-memory SQLite wrapper.
+ * Static files are served by the Workers assets binding (c.env.ASSETS).
  */
 
-import express from 'express';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import cookieParser from 'cookie-parser';
-import { config } from './config.js';
+import { Hono } from 'hono';
+import { initConfig } from './config.js';
+import { ensureInitialAdmin } from './db/index.js';
+import { loadUser, requireAuth, requireAdmin } from './auth/middleware.js';
 import { securityHeaders } from './middleware/security.js';
-import { generalRateLimiter } from './middleware/rateLimit.js';
-import { requireAuth, requireAdmin } from './auth/middleware.js';
-import { getSession } from './auth/sessions.js';
 
-// Route imports
-import authRoutes from './routes/auth.js';
-import adminRoutes from './routes/admin.js';
-import eventsRoutes from './routes/events.js';
-import bookingsRoutes from './routes/bookings.js';
-import ticketsRoutes from './routes/tickets.js';
-import customersRoutes from './routes/customers.js';
-import reportsRoutes from './routes/reports.js';
-import syncRoutes from './routes/sync.js';
+import { authRoutes } from './routes/auth.js';
+import { adminRoutes } from './routes/admin.js';
+import { eventRoutes } from './routes/events.js';
+import { bookingRoutes } from './routes/bookings.js';
+import { ticketRoutes } from './routes/tickets.js';
+import { customerRoutes } from './routes/customers.js';
+import { reportRoutes } from './routes/reports.js';
+import { syncRoutes } from './routes/sync.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const publicDir = path.join(__dirname, '..', 'public');
+async function serveAsset(c, path) {
+  if (!c.env?.ASSETS) return c.text('Static assets unavailable', 503);
+  return c.env.ASSETS.fetch(new Request(new URL(path, c.req.url), { headers: c.req.raw.headers }));
+}
 
-/**
- * Creates and configures the Express application.
- * @param {import('node:sqlite').DatabaseSync} db
- * @returns {express.Express}
- */
-export function createApp(db) {
-  const app = express();
+export function createApp(getDb) {
+  const app = new Hono();
 
-  // Basic settings
-  app.set('trust proxy', 1);
+  app.use('*', securityHeaders);
 
-  // Security headers and rate limiting
-  app.use(securityHeaders);
-  app.use(generalRateLimiter);
+  app.use('*', async (c, next) => {
+    initConfig(c.env || {});
+    const db = getDb(c);
+    c.set('db', db);
+    await ensureInitialAdmin(db);
+    await next();
+  });
+  app.use('*', loadUser);
 
-  // Body parsing & cookies
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-  app.use(cookieParser(config.session.secret));
+  app.get('/health', (c) =>
+    c.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'fireworks-bookings-web', version: '1.0.0' })
+  );
 
-  // Static assets (CSS, JS, images)
-  app.use('/css', express.static(path.join(publicDir, 'css'), { maxAge: '1h' }));
-  app.use('/js', express.static(path.join(publicDir, 'js'), { maxAge: '1h' }));
+  // Pages
+  app.get('/login', (c) => (c.get('user') ? c.redirect('/dashboard') : serveAsset(c, '/login.html')));
+  app.get('/', requireAuth, (c) => c.redirect('/dashboard'));
+  app.get('/dashboard', requireAuth, (c) => serveAsset(c, '/index.html'));
+  app.get('/index.html', (c) => c.redirect('/dashboard'));
+  app.get('/login.html', (c) => c.redirect('/login'));
 
-  // Public login page route
-  app.get('/login', (req, res) => {
-    const token = req.cookies?.[config.session.cookieName];
-    if (token) {
-      const session = getSession(db, token);
-      if (session) {
-        return res.redirect('/dashboard');
-      }
-    }
-    return res.sendFile(path.join(publicDir, 'login.html'));
+  // API
+  app.route('/api/auth', authRoutes());
+  app.use('/api/admin/*', requireAuth, requireAdmin);
+  app.route('/api/admin', adminRoutes());
+  app.use('/api/events/*', requireAuth);
+  app.route('/api/events', eventRoutes());
+  app.use('/api/bookings/*', requireAuth);
+  app.route('/api/bookings', bookingRoutes());
+  app.use('/api/tickets/*', requireAuth);
+  app.route('/api/tickets', ticketRoutes());
+  app.use('/api/customers/*', requireAuth);
+  app.route('/api/customers', customerRoutes());
+  app.use('/api/reports/*', requireAuth);
+  app.route('/api/reports', reportRoutes());
+  app.route('/api/sync', syncRoutes());
+
+  app.notFound((c) => {
+    if (c.req.path.startsWith('/api/')) return c.json({ error: 'Not Found', path: c.req.path }, 404);
+    return c.redirect(c.get('user') ? '/dashboard' : '/login');
   });
 
-  // Health check endpoint
-  app.get('/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      service: 'fireworks-bookings-web',
-      version: '1.0.0'
-    });
-  });
-
-  // Auth routes (login, logout, me)
-  app.use('/api/auth', authRoutes(db));
-
-  // Protected static HTML application pages
-  app.get('/', requireAuth(db), (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-
-  app.get('/dashboard', requireAuth(db), (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-
-  // Protected API routes
-  app.use('/api/admin', requireAuth(db), requireAdmin, adminRoutes(db));
-  app.use('/api/events', requireAuth(db), eventsRoutes(db));
-  app.use('/api/bookings', requireAuth(db), bookingsRoutes(db));
-  app.use('/api/tickets', requireAuth(db), ticketsRoutes(db));
-  app.use('/api/customers', requireAuth(db), customersRoutes(db));
-  app.use('/api/reports', requireAuth(db), reportsRoutes(db));
-  app.use('/api/sync', syncRoutes(db));
-
-  // 404 handler
-  app.use((req, res) => {
-    if (req.accepts('html')) {
-      const token = req.cookies?.[config.session.cookieName];
-      if (token && getSession(db, token)) {
-        return res.redirect('/dashboard');
-      }
-      return res.redirect('/login');
-    }
-    res.status(404).json({ error: 'Not Found', path: req.path });
-  });
-
-  // Error handling middleware
-  // eslint-disable-next-line no-unused-vars
-  app.use((err, req, res, _next) => {
+  app.onError((err, c) => {
     console.error('Unhandled server error:', err);
-    if (res.headersSent) {
-      return;
-    }
-    const status = err.status || 500;
-    res.status(status).json({
-      error: 'Internal Server Error',
-      message: config.env === 'development' ? err.message : 'An unexpected error occurred'
-    });
+    return c.json(
+      { error: 'Internal Server Error', message: c.env?.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred' },
+      500
+    );
   });
 
   return app;

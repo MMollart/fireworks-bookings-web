@@ -5,12 +5,15 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test test/*.test.js",
     "create-admin": "node scripts/create-admin.js",
     "seed": "node scripts/seed.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply DB --local",
+    "migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "check": "wrangler deploy --dry-run"
   },
   "keywords": [
     "fireworks",
@@ -26,11 +29,9 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "cookie-parser": "^1.4.7",
-    "dotenv": "^16.4.7",
-    "express": "^5.0.1"
+    "hono": "^4.13.13"
   },
   "devDependencies": {
-    "supertest": "^7.3.1"
+    "wrangler": "^4.150.0"
   }
 }

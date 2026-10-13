@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInMemoryDatabase } from '../src/db/index.js';
+import { createInMemoryDatabase } from './helpers/db.js';
 import { createEvent, listEvents, getEventById } from '../src/domain/events.js';
 import { createOrUpdateCustomer, getCustomerById, searchCustomers } from '../src/domain/customers.js';
 import { createDiscountCode, getDiscountCode, calculateDiscount, recordDiscountUsage } from '../src/domain/discounts.js';
@@ -11,12 +11,12 @@ import { getDashboardSummary, getTicketTypeBreakdown, exportBookingsCsv } from '
 describe('Fireworks Domain Logic & Data Model', () => {
   let db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createInMemoryDatabase();
   });
 
-  test('Event creation and retrieval', () => {
-    const ev = createEvent(db, {
+  test('Event creation and retrieval', async () => {
+    const ev = await createEvent(db, {
       name: 'Bonfire Night 2026',
       description: 'Annual village fireworks',
       event_date: '2026-11-05 18:30:00',
@@ -28,15 +28,15 @@ describe('Fireworks Domain Logic & Data Model', () => {
     assert.equal(ev.name, 'Bonfire Night 2026');
     assert.equal(ev.capacity, 500);
 
-    const retrieved = getEventById(db, ev.id);
+    const retrieved = await getEventById(db, ev.id);
     assert.equal(retrieved.name, 'Bonfire Night 2026');
 
-    const list = listEvents(db);
+    const list = await listEvents(db);
     assert.equal(list.length, 1);
   });
 
-  test('Customer storage with field-level encryption and blind indexing', () => {
-    const customer = createOrUpdateCustomer(db, {
+  test('Customer storage with field-level encryption and blind indexing', async () => {
+    const customer = await createOrUpdateCustomer(db, {
       name: 'Alice Johnson',
       email: 'alice@example.com',
       phone: '07700 900111',
@@ -48,33 +48,33 @@ describe('Fireworks Domain Logic & Data Model', () => {
     assert.equal(customer.email, 'alice@example.com');
 
     // Verify in raw DB that email is encrypted, not stored in plaintext
-    const rawRow = db.prepare('SELECT email_encrypted, phone_encrypted, email_blind_index FROM customers WHERE id = ?').get(customer.id);
+    const rawRow = await db.prepare('SELECT email_encrypted, phone_encrypted, email_blind_index FROM customers WHERE id = ?').get(customer.id);
     assert.ok(rawRow.email_encrypted);
     assert.ok(rawRow.email_encrypted.includes(':')); // iv:tag:ciphertext
     assert.notEqual(rawRow.email_encrypted, 'alice@example.com');
     assert.ok(rawRow.email_blind_index);
 
     // Retrieve and decrypt
-    const decrypted = getCustomerById(db, customer.id);
+    const decrypted = await getCustomerById(db, customer.id);
     assert.equal(decrypted.name, 'Alice Johnson');
     assert.equal(decrypted.email, 'alice@example.com');
     assert.equal(decrypted.phone, '07700 900111');
     assert.equal(decrypted.postcode, 'OX1 1AA');
 
     // Lookup customer by email
-    const results = searchCustomers(db, 'alice@example.com');
+    const results = await searchCustomers(db, 'alice@example.com');
     assert.equal(results.length, 1);
     assert.equal(results[0].id, customer.id);
   });
 
-  test('Discount codes: percentage and fixed amount calculations', () => {
-    const pctCode = createDiscountCode(db, {
+  test('Discount codes: percentage and fixed amount calculations', async () => {
+    const pctCode = await createDiscountCode(db, {
       code: 'DISCOUNT20',
       discount_type: 'percent',
       discount_value: 20
     });
 
-    const fixedCode = createDiscountCode(db, {
+    const fixedCode = await createDiscountCode(db, {
       code: 'FIVEPOUNDSOFF',
       discount_type: 'fixed',
       discount_value: 5
@@ -98,27 +98,27 @@ describe('Fireworks Domain Logic & Data Model', () => {
     assert.equal(calc3.total, 0);
 
     // Track usage
-    recordDiscountUsage(db, pctCode.code, 20, 80);
-    const updated = getDiscountCode(db, 'DISCOUNT20');
+    await recordDiscountUsage(db, pctCode.code, 20, 80);
+    const updated = await getDiscountCode(db, 'DISCOUNT20');
     assert.equal(updated.times_used, 1);
     assert.equal(updated.total_savings_generated, 20);
     assert.equal(updated.total_revenue_associated, 80);
   });
 
-  test('Booking creation, ticket issuance, and check-in flow', () => {
-    const ev = createEvent(db, {
+  test('Booking creation, ticket issuance, and check-in flow', async () => {
+    const ev = await createEvent(db, {
       name: 'Autumn Fireworks',
       event_date: '2026-11-05 19:00:00',
       capacity: 300
     });
 
-    createDiscountCode(db, {
+    await createDiscountCode(db, {
       code: 'SAVE10',
       discount_type: 'percent',
       discount_value: 10
     });
 
-    const bookingResult = createBooking(db, {
+    const bookingResult = await createBooking(db, {
       event_id: ev.id,
       customer: {
         name: 'Bob Smith',
@@ -150,27 +150,27 @@ describe('Fireworks Domain Logic & Data Model', () => {
 
     // Gate check-in for ticket 0
     const t0 = tickets[0];
-    const checkIn1 = checkInTicket(db, t0.barcode);
+    const checkIn1 = await checkInTicket(db, t0.barcode);
     assert.equal(checkIn1.success, true);
     assert.equal(checkIn1.ticket.checked_in, 1);
 
     // Second check-in attempt must fail / flag already checked in
-    const checkIn2 = checkInTicket(db, t0.barcode);
+    const checkIn2 = await checkInTicket(db, t0.barcode);
     assert.equal(checkIn2.success, false);
     assert.equal(checkIn2.already_checked_in, true);
 
     // Verify reports
-    const dashboard = getDashboardSummary(db);
+    const dashboard = await getDashboardSummary(db);
     assert.equal(dashboard.financials.gross_revenue, 22.50);
     assert.equal(dashboard.financials.confirmed_bookings, 1);
     assert.equal(dashboard.tickets.tickets_sold, 3);
     assert.equal(dashboard.tickets.tickets_checked_in, 1);
 
-    const tiers = getTicketTypeBreakdown(db);
+    const tiers = await getTicketTypeBreakdown(db);
     assert.equal(tiers.length, 2); // Adult and Child
 
     // CSV export
-    const csv = exportBookingsCsv(db);
+    const csv = await exportBookingsCsv(db);
     assert.ok(csv.includes('Booking Reference'));
     assert.ok(csv.includes(b.booking_reference));
     assert.ok(csv.includes('Bob Smith'));

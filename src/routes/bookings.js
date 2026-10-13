@@ -1,70 +1,40 @@
-import express from 'express';
+import { Hono } from 'hono';
+import { requireOperator } from '../auth/middleware.js';
 import { listBookings, getBookingById, createBooking, updateBookingStatus } from '../domain/bookings.js';
 
-export function createBookingRoutes(db) {
-  const router = express.Router();
+export function bookingRoutes() {
+  const r = new Hono();
 
-  // GET /api/bookings
-  router.get('/', (req, res) => {
-    const { eventId, status, search, reference, limit, offset } = req.query;
-    const bookings = listBookings(db, {
-      eventId,
-      status,
-      search,
-      reference,
-      limit,
-      offset,
-    });
-    return res.json({ bookings, count: bookings.length });
+  r.get('/', async (c) => {
+    const { eventId, status, search, reference, limit, offset } = c.req.query();
+    const bookings = await listBookings(c.get('db'), { eventId, status, search, reference, limit, offset });
+    return c.json({ bookings, count: bookings.length });
   });
 
-  // GET /api/bookings/:id
-  router.get('/:id', (req, res) => {
-    const booking = getBookingById(db, req.params.id);
-    if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-    return res.json({ booking });
+  r.get('/:id', async (c) => {
+    const booking = await getBookingById(c.get('db'), c.req.param('id'));
+    return booking ? c.json({ booking }) : c.json({ error: 'Booking not found' }, 404);
   });
 
-  // POST /api/bookings
-  router.post('/', (req, res) => {
-    if (req.user.role === 'viewer') {
-      return res.status(403).json({ error: 'Permission denied. Operator or admin role required.' });
-    }
-
+  r.post('/', requireOperator, async (c) => {
     try {
-      const booking = createBooking(db, req.body || {});
-      return res.status(201).json({ success: true, booking });
+      const booking = await createBooking(c.get('db'), await c.req.json().catch(() => ({})));
+      return c.json({ success: true, booking }, 201);
     } catch (err) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
   });
 
-  // PATCH /api/bookings/:id/status
-  router.patch('/:id/status', (req, res) => {
-    if (req.user.role === 'viewer') {
-      return res.status(403).json({ error: 'Permission denied. Operator or admin role required.' });
-    }
-
-    const { status } = req.body || {};
-    if (!status) {
-      return res.status(400).json({ error: 'Status is required' });
-    }
-
+  r.patch('/:id/status', requireOperator, async (c) => {
+    const { status } = await c.req.json().catch(() => ({}));
+    if (!status) return c.json({ error: 'Status is required' }, 400);
     try {
-      const updated = updateBookingStatus(db, req.params.id, status);
-      if (!updated) {
-        return res.status(404).json({ error: 'Booking not found' });
-      }
-      return res.json({ success: true, booking: updated });
+      const booking = await updateBookingStatus(c.get('db'), c.req.param('id'), status);
+      return booking ? c.json({ success: true, booking }) : c.json({ error: 'Booking not found' }, 404);
     } catch (err) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
   });
 
-  return router;
+  return r;
 }
-
-createBookingRoutes.createBookingRoutes = createBookingRoutes;
-export default createBookingRoutes;

@@ -1,30 +1,23 @@
-import express from 'express';
+import { Hono } from 'hono';
 import { listCustomers, getCustomerById } from '../domain/customers.js';
 import { listBookings } from '../domain/bookings.js';
 
-export function createCustomerRoutes(db) {
-  const router = express.Router();
+export function customerRoutes() {
+  const r = new Hono();
 
-  // GET /api/customers
-  router.get('/', (req, res) => {
-    const { search, limit, offset } = req.query;
-    const customers = listCustomers(db, { search, limit, offset });
-    return res.json({ customers, count: customers.length });
+  r.get('/', async (c) => {
+    const { search, limit, offset } = c.req.query();
+    const customers = await listCustomers(c.get('db'), { search, limit, offset });
+    return c.json({ customers, count: customers.length });
   });
 
-  // GET /api/customers/:id
-  router.get('/:id', (req, res) => {
-    const customer = getCustomerById(db, req.params.id);
-    if (!customer) {
-      return res.status(404).json({ error: 'Customer not found' });
-    }
-
-    const bookings = listBookings(db, { limit: 50 }).filter((b) => b.customer_id === customer.id);
-    return res.json({ customer, bookings });
+  r.get('/:id', async (c) => {
+    const db = c.get('db');
+    const customer = await getCustomerById(db, c.req.param('id'));
+    if (!customer) return c.json({ error: 'Customer not found' }, 404);
+    const bookings = await listBookings(db, { customerId: customer.id, limit: 50 });
+    return c.json({ customer, bookings });
   });
 
-  return router;
+  return r;
 }
-
-createCustomerRoutes.createCustomerRoutes = createCustomerRoutes;
-export default createCustomerRoutes;

@@ -1,151 +1,100 @@
-import express from 'express';
-import { requireAdmin } from '../auth/middleware.js';
+import { Hono } from 'hono';
 import { hashPassword, validatePasswordPolicy } from '../auth/passwords.js';
 import { destroyUserSessions } from '../auth/sessions.js';
 
-export function createAdminRoutes(db) {
-  const router = express.Router();
+const VALID_ROLES = ['admin', 'operator', 'viewer'];
 
-  // All admin routes require admin privileges
-  router.use(requireAdmin);
+export function adminRoutes() {
+  const r = new Hono();
 
-  // GET /api/admin/users
-  router.get('/users', (req, res) => {
-    const users = db.prepare(`
-      SELECT id, username, role, is_active, created_at, updated_at, last_login_at
-      FROM users
-      ORDER BY id ASC
-    `).all();
-
-    return res.json({ users });
+  r.get('/users', async (c) => {
+    const users = await c
+      .get('db')
+      .prepare('SELECT id, username, role, is_active, created_at, updated_at, last_login_at FROM users ORDER BY id ASC')
+      .all();
+    return c.json({ users });
   });
 
-  // POST /api/admin/users
-  router.post('/users', (req, res) => {
-    const { username, password, role = 'viewer' } = req.body || {};
+  r.post('/users', async (c) => {
+    const db = c.get('db');
+    const { username, password, role = 'viewer' } = await c.req.json().catch(() => ({}));
 
     if (!username || typeof username !== 'string' || username.trim().length < 3) {
-      return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+      return c.json({ error: 'Username must be at least 3 characters long' }, 400);
     }
+    const trimmed = username.trim();
 
-    const trimmedUsername = username.trim();
-
-    // Validate password policy
     const policy = validatePasswordPolicy(password);
-    if (!policy.valid) {
-      return res.status(400).json({ error: policy.error });
+    if (!policy.valid) return c.json({ error: policy.error }, 400);
+    if (!VALID_ROLES.includes(role)) {
+      return c.json({ error: `Invalid role. Allowed roles: ${VALID_ROLES.join(', ')}` }, 400);
     }
 
-    const validRoles = ['admin', 'operator', 'viewer'];
-    if (!validRoles.includes(role)) {
-      return res.status(400).json({ error: `Invalid role. Allowed roles: ${validRoles.join(', ')}` });
-    }
+    const existing = await db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(trimmed);
+    if (existing) return c.json({ error: `User '${trimmed}' already exists` }, 409);
 
-    // Check duplicate
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE').get(trimmedUsername);
-    if (existing) {
-      return res.status(409).json({ error: `User '${trimmedUsername}' already exists` });
-    }
-
-    const passwordHash = hashPassword(password);
-    const parts = passwordHash.split(':');
-    const salt = parts[1] || '';
     const now = new Date().toISOString();
+    const result = await db
+      .prepare(
+        `INSERT INTO users (username, password_hash, salt, role, is_active, created_at, updated_at)
+         VALUES (?, ?, '', ?, 1, ?, ?)`
+      )
+      .run(trimmed, await hashPassword(password), role, now, now);
 
-    const insertStmt = db.prepare(`
-      INSERT INTO users (username, password_hash, salt, role, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, ?)
-    `);
-
-    const result = insertStmt.run(trimmedUsername, passwordHash, salt, role, now, now);
-
-    const newUser = db.prepare(`
-      SELECT id, username, role, is_active, created_at, updated_at
-      FROM users WHERE id = ?
-    `).get(result.lastInsertRowid);
-
-    return res.status(201).json({
-      success: true,
-      message: `User '${trimmedUsername}' created successfully`,
-      user: newUser,
-    });
+    const user = await db
+      .prepare('SELECT id, username, role, is_active, created_at, updated_at FROM users WHERE id = ?')
+      .get(result.lastInsertRowid);
+    return c.json({ success: true, message: `User '${trimmed}' created successfully`, user }, 201);
   });
 
-  // PATCH /api/admin/users/:id/status
-  router.patch('/users/:id/status', (req, res) => {
-    const userId = parseInt(req.params.id, 10);
-    const isActive = req.body?.isActive !== undefined ? req.body.isActive : req.body?.is_active;
+  r.patch('/users/:id/status', async (c) => {
+    const db = c.get('db');
+    const userId = parseInt(c.req.param('id'), 10);
+    const body = await c.req.json().catch(() => ({}));
+    const isActive = body.isActive !== undefined ? body.isActive : body.is_active;
 
-    if (isActive === undefined) {
-      return res.status(400).json({ error: 'isActive or is_active boolean is required' });
+    if (isActive === undefined) return c.json({ error: 'isActive or is_active boolean is required' }, 400);
+    if (c.get('user').id === userId && !isActive) {
+      return c.json({ error: 'You cannot disable your own administrator account' }, 400);
     }
 
-    // Prevent admin from disabling their own account
-    if (req.user.id === userId && !isActive) {
-      return res.status(400).json({ error: 'You cannot disable your own administrator account' });
-    }
+    const result = await db
+      .prepare('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?')
+      .run(isActive ? 1 : 0, new Date().toISOString(), userId);
+    if (result.changes === 0) return c.json({ error: 'User not found' }, 404);
 
-    const now = new Date().toISOString();
-    const stmt = db.prepare('UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?');
-    const result = stmt.run(isActive ? 1 : 0, now, userId);
+    if (!isActive) await destroyUserSessions(db, userId);
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // If disabled, kill active sessions
-    if (!isActive) {
-      destroyUserSessions(db, userId);
-    }
-
-    const updated = db.prepare('SELECT id, username, role, is_active FROM users WHERE id = ?').get(userId);
-    return res.json({
+    const updated = await db.prepare('SELECT id, username, role, is_active FROM users WHERE id = ?').get(userId);
+    return c.json({
       success: true,
       message: `User '${updated.username}' is now ${updated.is_active ? 'active' : 'disabled'}`,
       user: updated,
     });
   });
 
-  // POST /api/admin/users/:id/reset-password or /api/admin/users/:id/password
-  const handlePasswordReset = (req, res) => {
-    const userId = parseInt(req.params.id, 10);
-    const pwd = req.body?.password || req.body?.newPassword;
+  const resetPassword = async (c) => {
+    const db = c.get('db');
+    const userId = parseInt(c.req.param('id'), 10);
+    const body = await c.req.json().catch(() => ({}));
+    const pwd = body.password || body.newPassword;
 
     const policy = validatePasswordPolicy(pwd);
-    if (!policy.valid) {
-      return res.status(400).json({ error: policy.error });
-    }
+    if (!policy.valid) return c.json({ error: policy.error }, 400);
 
-    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    const user = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+    if (!user) return c.json({ error: 'User not found' }, 404);
 
-    const passwordHash = hashPassword(pwd);
-    const parts = passwordHash.split(':');
-    const salt = parts[1] || '';
-    const now = new Date().toISOString();
+    await db
+      .prepare("UPDATE users SET password_hash = ?, salt = '', updated_at = ? WHERE id = ?")
+      .run(await hashPassword(pwd), new Date().toISOString(), userId);
+    await destroyUserSessions(db, userId);
 
-    db.prepare(`
-      UPDATE users
-      SET password_hash = ?, salt = ?, updated_at = ?
-      WHERE id = ?
-    `).run(passwordHash, salt, now, userId);
-
-    // Invalidate existing sessions so user must log in with new password
-    destroyUserSessions(db, userId);
-
-    return res.json({
-      success: true,
-      message: `Password reset successfully for user '${user.username}'`,
-    });
+    return c.json({ success: true, message: `Password reset successfully for user '${user.username}'` });
   };
 
-  router.post('/users/:id/reset-password', handlePasswordReset);
-  router.post('/users/:id/password', handlePasswordReset);
+  r.post('/users/:id/reset-password', resetPassword);
+  r.post('/users/:id/password', resetPassword);
 
-  return router;
+  return r;
 }
-
-createAdminRoutes.createAdminRoutes = createAdminRoutes;
-export default createAdminRoutes;

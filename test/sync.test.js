@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInMemoryDatabase } from '../src/db/index.js';
+import { createInMemoryDatabase } from './helpers/db.js';
 import { runSync, getSyncStatus, ingestWebhookEvent, generateSimulatedBatch } from '../src/sync/ticketsource.js';
 import { createEvent } from '../src/domain/events.js';
 import { listBookings } from '../src/domain/bookings.js';
@@ -8,17 +8,17 @@ import { listBookings } from '../src/domain/bookings.js';
 describe('Resumable Sync & TicketSource Ingestion', () => {
   let db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createInMemoryDatabase();
     // Ensure an event exists for ingestion mapping
-    createEvent(db, {
+    await createEvent(db, {
       name: 'Default Fireworks Night',
       event_date: '2026-11-05 19:30:00',
       capacity: 1000
     });
   });
 
-  test('generates simulated batch with valid order structure', () => {
+  test('generates simulated batch with valid order structure', async () => {
     const batch = generateSimulatedBatch(5);
     assert.equal(batch.length, 5);
     const order = batch[0];
@@ -30,7 +30,7 @@ describe('Resumable Sync & TicketSource Ingestion', () => {
   });
 
   test('runs sync, creates checkpoint and ingests orders', async () => {
-    const statusBefore = getSyncStatus(db);
+    const statusBefore = await getSyncStatus(db);
     assert.equal(statusBefore.checkpoint, null);
 
     const result = await runSync(db, { batchSize: 3 });
@@ -38,14 +38,14 @@ describe('Resumable Sync & TicketSource Ingestion', () => {
     assert.equal(result.imported, 3);
     assert.equal(result.errors, 0);
 
-    const statusAfter = getSyncStatus(db);
+    const statusAfter = await getSyncStatus(db);
     assert.ok(statusAfter.checkpoint);
     assert.equal(statusAfter.checkpoint.status, 'completed');
     assert.equal(statusAfter.checkpoint.records_imported, 3);
     assert.ok(statusAfter.checkpoint.last_sync_cursor);
 
     // Verify bookings exist in the database
-    const bookings = listBookings(db);
+    const bookings = await listBookings(db);
     assert.equal(bookings.length, 3);
   });
 
@@ -56,7 +56,7 @@ describe('Resumable Sync & TicketSource Ingestion', () => {
     const res1 = await runSync(db, { customBatch: batch });
     assert.equal(res1.imported, 2);
 
-    const bookingsAfterFirst = listBookings(db);
+    const bookingsAfterFirst = await listBookings(db);
     assert.equal(bookingsAfterFirst.length, 2);
 
     // Ingest same batch again
@@ -64,7 +64,7 @@ describe('Resumable Sync & TicketSource Ingestion', () => {
     assert.equal(res2.imported, 2);
 
     // Bookings count must remain 2, not 4
-    const bookingsAfterSecond = listBookings(db);
+    const bookingsAfterSecond = await listBookings(db);
     assert.equal(bookingsAfterSecond.length, 2);
   });
 
