@@ -20,6 +20,11 @@ function bookingsUrl(date, mode) {
   return { path: base, params: { per_page: 100 }, incremental: mode === 'incremental' && Boolean(date.checkpoint) };
 }
 
+function dayBefore(iso) {
+  const d = new Date(Date.parse(iso) - 86_400_000);
+  return d.toISOString().slice(0, 10);
+}
+
 async function startScan(db, date, mode, now) {
   await db
     .prepare(
@@ -46,7 +51,8 @@ async function fetchFirstPage(db, client, date, mode) {
       return await client.get(path, {
         ...params,
         'filter[updated_at][operator]': 'after',
-        'filter[updated_at][value]': date.checkpoint,
+        // The API compares whole dates (2019-01-01), so go back a day to include same-day changes; local comparison dedupes.
+        'filter[updated_at][value]': dayBefore(date.checkpoint),
       });
     } catch (err) {
       if (err.status === 400 || err.status === 422) {

@@ -6,6 +6,16 @@
 import { randomHex } from '../lib/bytes.js';
 import { encrypt, blindIndex } from '../crypto/encryption.js';
 
+const CURRENCY = 'GBP'; // the TicketSource API supplies no currency
+
+/** A line "uses a code" when the code has a name, or carries a non-zero amount. A missing amount stays null (unknown). */
+export function codeInfo(code) {
+  if (!code || typeof code !== 'object') return { hasCode: false, amount: null };
+  const named = typeof code.description === 'string' && code.description.trim() !== '';
+  const amount = typeof code.amount === 'number' && Number.isFinite(code.amount) ? code.amount : null;
+  return { hasCode: named || (amount !== null && amount !== 0), amount };
+}
+
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 export function idFromLink(link) {
@@ -137,19 +147,19 @@ export async function ingestBooking(db, client, booking, ctx) {
     db
       .prepare(
         `INSERT INTO bookings (id, reference, event_id, customer_id, booking_date, status, subtotal, discount_amount, total_price,
-           payment_method, payment_reference, notes, ts_booking_id, ts_updated_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           payment_method, payment_reference, notes, ts_booking_id, ts_updated_at, ts_created_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET reference = excluded.reference, event_id = excluded.event_id, customer_id = excluded.customer_id,
            booking_date = excluded.booking_date, status = excluded.status, subtotal = excluded.subtotal,
            discount_amount = excluded.discount_amount, total_price = excluded.total_price, payment_method = excluded.payment_method,
            payment_reference = excluded.payment_reference, notes = excluded.notes, ts_booking_id = excluded.ts_booking_id,
-           ts_updated_at = excluded.ts_updated_at, updated_at = excluded.updated_at`
+           ts_updated_at = excluded.ts_updated_at, ts_created_at = excluded.ts_created_at, updated_at = excluded.updated_at`
       )
       .bind(
         bookingId, a.ref, date.id, customerId, a.created_at || iso, money.status,
         round2(money.total + money.discount), money.discount, money.total,
         method ? `TicketSource ${method}` : 'TicketSource', booking.id, notes,
-        booking.id, a.updated_at || a.created_at || null, a.created_at || iso, iso
+        booking.id, a.updated_at || a.created_at || null, a.created_at || null, a.created_at || iso, iso
       ),
   ];
 
@@ -160,17 +170,19 @@ export async function ingestBooking(db, client, booking, ctx) {
       db
         .prepare(
           `INSERT INTO booking_transactions (booking_id, line_index, line_type, payment_method, is_refund, gross, fee, fee_vat, net,
-             discount_automatic, discount_code_description, discount_code_amount, gift_aid, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             discount_automatic, discount_code_description, discount_code_amount, has_code, code_amount, currency, gift_aid, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(booking_id, line_index) DO UPDATE SET line_type = excluded.line_type, payment_method = excluded.payment_method,
              is_refund = excluded.is_refund, gross = excluded.gross, fee = excluded.fee, fee_vat = excluded.fee_vat, net = excluded.net,
              discount_automatic = excluded.discount_automatic, discount_code_description = excluded.discount_code_description,
-             discount_code_amount = excluded.discount_code_amount, gift_aid = excluded.gift_aid, updated_at = excluded.updated_at`
+             discount_code_amount = excluded.discount_code_amount, has_code = excluded.has_code, code_amount = excluded.code_amount,
+             currency = excluded.currency, gift_aid = excluded.gift_aid, updated_at = excluded.updated_at`
         )
         .bind(
           bookingId, i, l.line_type ?? null, l.payment_method ?? null, l.is_refund ? 1 : 0,
           Number(amt.gross) || 0, Number(amt.fee) || 0, Number(amt.fee_vat) || 0, Number(amt.net) || 0,
           Number(amt.discounts?.automatic) || 0, amt.discounts?.code?.description ?? null, Number(amt.discounts?.code?.amount) || 0,
+          codeInfo(amt.discounts?.code).hasCode ? 1 : 0, codeInfo(amt.discounts?.code).amount, CURRENCY,
           l.donation?.gift_aid === undefined ? null : l.donation.gift_aid ? 1 : 0,
           l.created_at ?? null, l.updated_at ?? null
         )

@@ -760,3 +760,60 @@ body {
   .header-inner { padding: var(--space-2) var(--space-4); }
   .main-content { padding: 0 var(--space-4); }
 }
+
+/* Analysis and Discount Codes */
+.filter-bar .form-label { margin: 0; }
+
+.mode-switch { display: inline-flex; gap: var(--space-2); margin-left: auto; }
+.mode-btn.active { background-color: var(--night); color: var(--on-night); }
+
+.status-box {
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--divider);
+  background-color: var(--surface);
+  color: var(--ink);
+  margin-bottom: var(--space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.status-box[hidden] { display: none; }
+.status-loading { color: var(--ink-muted); }
+.status-empty { background-color: var(--surface-tint); }
+.status-error { background-color: var(--danger-tint); border-color: var(--danger-strong); color: var(--danger-strong); font-weight: 600; }
+.status-warning { background-color: var(--warning-tint); border-color: var(--spark-gold); }
+
+.notice {
+  padding: 12px var(--space-4);
+  border-left: 4px solid var(--night);
+  background-color: var(--surface-tint);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  line-height: 20px;
+  margin-bottom: var(--space-2);
+}
+
+.no-data { color: var(--ink-muted); font-style: italic; }
+.partial-tag {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background-color: var(--warning-tint);
+  color: var(--ink);
+}
+.muted { color: var(--ink-muted); }
+
+.total-row td { font-weight: 700; background-color: var(--surface-tint); }
+.notes { margin: 0; padding-left: var(--space-4); font-size: 14px; }
+.notes li { margin-bottom: var(--space-1); }
+
+.chart-wrap { width: 100%; }
+.chart { width: 100%; height: auto; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-2); font-size: 14px; color: var(--ink-muted); }
+.legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
+.legend-swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+.legend-nodata { background: repeating-linear-gradient(45deg, var(--divider) 0 3px, transparent 3px 6px); }
+
+#analysisNotices { margin-bottom: var(--space-4); }

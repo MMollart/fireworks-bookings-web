@@ -212,6 +212,22 @@ describe('HTTP API & Authentication Integration Tests', () => {
     }
   });
 
+  test('Analysis endpoints validate scope and report setup state', async () => {
+    assert.equal((await call('GET', '/api/analysis/options')).status, 401);
+
+    const options = await call('GET', '/api/analysis/options', { cookie: viewerCookie });
+    assert.equal(options.status, 200);
+    assert.equal(options.body.hasDownloadedBookings, false); // setup empty state: nothing downloaded
+
+    assert.equal((await call('GET', '/api/analysis/sales', { cookie: viewerCookie })).status, 400);
+    assert.equal((await call('GET', '/api/analysis/sales?eventId=nope&group=daily', { cookie: viewerCookie })).status, 400);
+    assert.equal((await call('GET', '/api/analysis/compare?eventId=a&compareEventId=a', { cookie: viewerCookie })).status, 400);
+    assert.equal((await call('GET', '/api/analysis/discounts?scope=bogus', { cookie: viewerCookie })).status, 400);
+    const years = await call('GET', '/api/analysis/discounts?scope=years', { cookie: viewerCookie });
+    assert.equal(years.status, 200);
+    assert.equal(years.body.state, 'no_bookings');
+  });
+
   test('Initial admin is created from ADMIN_INITIAL_PASSWORD when no users exist', async () => {
     const env = { ...ENV, ADMIN_INITIAL_USERNAME: 'boss', ADMIN_INITIAL_PASSWORD: 'FirstRunPass123!' };
     const fresh = createInMemoryDatabase();

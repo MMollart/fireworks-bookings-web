@@ -43,7 +43,7 @@ describe('TicketSource integration', () => {
     cfg = { settlementDays: 14, customerTtlHours: 168 };
 
     ts.addEvent('evt-live', 'Fireworks 2026', { dates: [{ id: 'dat-live', start: future(5) }] });
-    ts.addEvent('evt-done', 'Fireworks 2025', { dates: [{ id: 'dat-done', start: past(60) }] });
+    ts.addEvent('evt-done', 'Fireworks 2025', { settled: true, dates: [{ id: 'dat-done', start: past(60) }] });
     ts.addEvent('evt-old', 'Fireworks 2023', { archived: true, dates: [{ id: 'dat-old', start: past(900) }] });
     for (let n = 1; n <= 5; n++) ts.addBooking('dat-live', n);
     for (let n = 11; n <= 12; n++) ts.addBooking('dat-done', n, { gross: 30, refund: 30 });
@@ -60,7 +60,7 @@ describe('TicketSource integration', () => {
 
   test('lists events as unsettled / settled / archived and caches them', async () => {
     const calls = await refresh();
-    assert.equal(calls, 1 + 2); // events + dates for the two non-archived events
+    assert.equal(calls, 2 + 3); // all events + settled set + dates for each of the three events
 
     const states = Object.fromEntries((await listEventSummaries(db, { settlementDays: 14, now: NOW })).map((e) => [e.id, e.state]));
     assert.deepEqual(states, { 'evt-live': 'unsettled', 'evt-done': 'settled', 'evt-old': 'archived' });
@@ -71,14 +71,36 @@ describe('TicketSource integration', () => {
     assert.equal(ts.calls.length, 0);
 
     // force bypasses the cache
-    assert.equal(await refresh({ force: true }), 3);
+    assert.equal(await refresh({ force: true }), 5);
 
     const unsettled = await listEventSummaries(db, { settlementDays: 14, now: NOW, state: 'unsettled' });
     assert.deepEqual(unsettled.map((e) => e.id), ['evt-live']);
   });
 
+  test('settled events are not hidden by the API default; falls back cleanly if the any-operator is rejected', async () => {
+    // the plain default request would miss evt-done entirely
+    const plain = await ts.fetch('https://api.ticketsource.io/events', { headers: { Authorization: 'Bearer test-key' } });
+    assert.deepEqual((await plain.json()).data.map((e) => e.id).sort(), ['evt-live', 'evt-old']);
+
+    await refresh();
+    const ids = (await listEventSummaries(db, { settlementDays: 14, now: NOW })).map((e) => e.id).sort();
+    assert.deepEqual(ids, ['evt-done', 'evt-live', 'evt-old']);
+    const settledFlags = await db.prepare('SELECT id, settled FROM ts_events ORDER BY id').all();
+    assert.deepEqual(settledFlags.map((r) => r.settled), [1, 0, 0]);
+
+    // API rejects `any`: still lists events (unsettled-only default), settled flag stays unknown rather than wrong
+    db = createInMemoryDatabase();
+    ts.rejectAnyOperator = true;
+    await refresh();
+    const fallback = await db.prepare('SELECT id, settled FROM ts_events ORDER BY id').all();
+    assert.deepEqual(fallback.map((r) => r.id), ['evt-live', 'evt-old']);
+    assert.ok(fallback.every((r) => r.settled === null));
+  });
+
   test('settlement state can be pinned and respects the settlement window', () => {
-    const ev = { archived: 0, state_override: null };
+    const ev = { archived: 0, state_override: null, settled: null };
+    assert.equal(eventState({ ...ev, settled: 1 }, [{ starts_at: future(5) }], 14, NOW), 'settled');
+    assert.equal(eventState({ ...ev, settled: 0 }, [{ starts_at: past(900) }], 14, NOW), 'unsettled');
     const d = [{ starts_at: past(10) }];
     assert.equal(eventState(ev, d, 14, NOW), 'unsettled');
     assert.equal(eventState(ev, d, 7, NOW), 'settled');

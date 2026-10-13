@@ -20,6 +20,7 @@ import { ticketRoutes } from './routes/tickets.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { ticketSourceRoutes } from './routes/ticketsource.js';
+import { analysisRoutes } from './routes/analysis.js';
 
 async function serveAsset(c, path) {
   if (!c.env?.ASSETS) return c.text('Static assets unavailable', 503);
@@ -67,6 +68,8 @@ export function createApp(getDb) {
   app.route('/api/reports', reportRoutes());
   app.use('/api/ticketsource/*', requireAuth);
   app.route('/api/ticketsource', ticketSourceRoutes());
+  app.use('/api/analysis/*', requireAuth);
+  app.route('/api/analysis', analysisRoutes());
 
   app.notFound((c) => {
     if (c.req.path.startsWith('/api/')) return c.json({ error: 'Not Found', path: c.req.path }, 404);

@@ -1,11 +1,15 @@
 /**
  * TicketSource events & dates, cached in D1 so listing them costs no API calls within the TTL.
  *
- * TicketSource has no "settled" flag in its API, so state is derived:
- *   archived  - the event is archived in TicketSource
- *   settled   - not archived and every performance ended more than `settlementDays` ago
- *   unsettled - everything else (upcoming, in progress, or recently finished)
- * An admin can pin an event to settled/unsettled (ts_events.state_override).
+ * State comes from TicketSource itself:
+ *   archived  - the event's `archived` attribute is true
+ *   settled   - TicketSource's `settled` filter returns it (settled and not archived)
+ *   unsettled - everything else
+ * NOTE: GET /events silently defaults to filter[settled]=false, i.e. settled events are hidden unless the request asks
+ * for them, so the list is fetched with settled/archived filters set to `any`, and the settled set is fetched separately
+ * (the settled flag is not an attribute of the event resource). If the flag has never been fetched (NULL) the state falls
+ * back to a heuristic: settled `settlementDays` after the last performance ends.
+ * An admin can still pin an event to settled/unsettled (ts_events.state_override).
  */
 
 const DAY_MS = 86_400_000;
@@ -17,6 +21,8 @@ function bool(v) {
 export function eventState(event, dates, settlementDays, now = Date.now()) {
   if (event.archived) return 'archived';
   if (event.state_override) return event.state_override;
+  if (event.settled === 1 || event.settled === true) return 'settled';
+  if (event.settled === 0 || event.settled === false) return 'unsettled';
   if (!dates || dates.length === 0) return 'unsettled';
 
   const lastEnd = Math.max(
@@ -25,23 +31,48 @@ export function eventState(event, dates, settlementDays, now = Date.now()) {
   return Number.isFinite(lastEnd) && now > lastEnd + settlementDays * DAY_MS ? 'settled' : 'unsettled';
 }
 
-/** Upserts the events list. One API call per 100 events; skipped while the cache is fresh. */
+/**
+ * Upserts every event, archived and settled included. TicketSource hides settled events unless asked, so:
+ *   1. list all events with filter[settled]=any and filter[archived]=any
+ *   2. list the settled ones (filter[settled]=eq true) to learn each event's settled flag
+ * If the API rejects the `any` operator, fall back to the unfiltered list rather than fail.
+ */
 async function refreshEventList(db, client, { force, ttlMs, now }) {
   const newest = await db.prepare('SELECT MAX(fetched_at) AS t FROM ts_events').get();
   if (!force && newest?.t && now - newest.t < ttlMs) return false;
 
-  const events = await client.list('/events');
+  const anyFilter = { 'filter[settled][operator]': 'any', 'filter[archived][operator]': 'any' };
+  const listAll = async (params) => {
+    try {
+      return await client.list('/events', params);
+    } catch (err) {
+      if (err.status === 400 || err.status === 422) return null;
+      throw err;
+    }
+  };
+
+  let events = await listAll(anyFilter);
+  const filtered = events !== null;
+  if (!filtered) events = await client.list('/events');
+
+  let settledIds = null;
+  if (filtered) {
+    const settled = await listAll({ 'filter[archived][operator]': 'any', 'filter[settled][operator]': 'eq', 'filter[settled][value]': 'true' });
+    if (settled) settledIds = new Set(settled.map((e) => e.id));
+  }
+
   const stmts = events.map((e) => {
     const a = e.attributes || {};
+    const settled = settledIds ? (settledIds.has(e.id) ? 1 : 0) : null;
     return db
       .prepare(
-        `INSERT INTO ts_events (id, name, reference, activated, archived, is_public, ts_created_at, ts_updated_at, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO ts_events (id, name, reference, activated, archived, is_public, settled, ts_created_at, ts_updated_at, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, reference = excluded.reference, activated = excluded.activated,
-           archived = excluded.archived, is_public = excluded.is_public, ts_created_at = excluded.ts_created_at,
-           ts_updated_at = excluded.ts_updated_at, fetched_at = excluded.fetched_at`
+           archived = excluded.archived, is_public = excluded.is_public, settled = COALESCE(excluded.settled, ts_events.settled),
+           ts_created_at = excluded.ts_created_at, ts_updated_at = excluded.ts_updated_at, fetched_at = excluded.fetched_at`
       )
-      .bind(e.id, a.name ?? null, a.reference ?? null, bool(a.activated), bool(a.archived), bool(a.public), a.created_at ?? null, a.updated_at ?? null, now);
+      .bind(e.id, a.name ?? null, a.reference ?? null, bool(a.activated), bool(a.archived), bool(a.public), settled, a.created_at ?? null, a.updated_at ?? null, now);
   });
   if (stmts.length) await db.batch(stmts);
   return true;
@@ -82,8 +113,7 @@ export async function refreshDates(db, client, tsEvent, now = Date.now()) {
 }
 
 /**
- * Refreshes the cached events list and the dates of every non-archived event (needed to derive
- * settled/unsettled). Archived events' dates are fetched lazily when you sync them.
+ * Refreshes the cached events list (archived and settled included) and the performance dates of every event.
  * Throws StepLimit when the call budget runs out; progress is already saved, so just call again.
  */
 export async function refreshEvents(db, client, { force = false, ttlMs, now = Date.now() }) {
@@ -91,7 +121,7 @@ export async function refreshEvents(db, client, { force = false, ttlMs, now = Da
 
   const stale = await db
     .prepare(
-      `SELECT * FROM ts_events WHERE archived = 0 AND (dates_fetched_at IS NULL OR dates_fetched_at < ?)
+      `SELECT * FROM ts_events WHERE (dates_fetched_at IS NULL OR dates_fetched_at < ?)
        ORDER BY name`
     )
     .all(force ? now + 1 : now - ttlMs);
@@ -126,6 +156,7 @@ export async function listEventSummaries(db, { settlementDays, now = Date.now(),
       state: eventState(e, ds, settlementDays, now),
       state_pinned: e.state_override || null,
       archived: Boolean(e.archived),
+      settled: e.settled === null || e.settled === undefined ? null : Boolean(e.settled),
       dates: ds.map((d) => ({
         id: d.id,
         starts_at: d.starts_at,

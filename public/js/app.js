@@ -157,6 +157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         break;
       case 'events':
         loadEvents();
+        loadTsEventsPanel();
         break;
       case 'bookings':
         loadBookings();
@@ -172,6 +173,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         break;
       case 'sync':
         loadSync();
+        break;
+      case 'analysis':
+      case 'discounts':
+        if (window.FWAnalysis) window.FWAnalysis.show(tab);
         break;
       case 'admin':
         if (currentUser && currentUser.role === 'admin') {
@@ -816,8 +821,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         ? `Paused by TicketSource until ${formatDate(data.rate.blockedUntil)}`
         : 'Limit is 240 calls/min; this app stays below it';
       document.getElementById('tsStateHelp').textContent =
-        `Events with no TicketSource settlement flag are treated as settled ${data.settlementDays} days after their last date ends. ` +
-        (currentUser?.role === 'admin' ? 'Admins can pin an event as settled or unsettled.' : '');
+        'Status comes from TicketSource: unsettled, settled (its own settled flag) or archived. Settled events are hidden by TicketSource unless asked for; refreshing the list asks for them.';
 
       const canSync = currentUser && currentUser.role !== 'viewer';
       const tbody = document.querySelector('#tsEventsTable tbody');
@@ -844,23 +848,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             <td>
               ${canSync ? `<button class="btn btn-primary btn-sm ts-sync-btn" data-id="${escapeHtml(ev.id)}" data-mode="">Refresh bookings (${mode})</button>
               <button class="btn btn-secondary btn-sm ts-sync-btn" data-id="${escapeHtml(ev.id)}" data-mode="force" title="Re-read every booking and customer, ignoring the checkpoint and caches">Full re-sync</button>` : ''}
-              ${currentUser?.role === 'admin' && !ev.archived ? `<button class="btn btn-secondary btn-sm ts-pin-btn" data-id="${escapeHtml(ev.id)}" data-state="${ev.state === 'settled' ? 'unsettled' : 'settled'}">Mark ${ev.state === 'settled' ? 'unsettled' : 'settled'}</button>` : ''}
             </td>
           </tr>`;
       }).join('');
 
       document.querySelectorAll('.ts-sync-btn').forEach((btn) => {
         btn.addEventListener('click', () => syncTsEvent(btn.dataset.id, btn.dataset.mode));
-      });
-      document.querySelectorAll('.ts-pin-btn').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const r = await fetch(`/api/ticketsource/events/${encodeURIComponent(btn.dataset.id)}/state`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ state: btn.dataset.state })
-          });
-          if (r.ok) loadSync(); else showToast('Failed to update event state', 'error');
-        });
       });
     } catch (err) {
       console.error('Error loading TicketSource events:', err);
@@ -901,12 +894,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('tsStateFilter').addEventListener('change', loadSync);
 
-  document.getElementById('tsRefreshEventsBtn').addEventListener('click', async () => {
-    if (tsBusy) return;
+  // Read-only: downloads every event from TicketSource (settled and archived included) into the local cache.
+  async function refreshTsEvents(label) {
+    if (tsBusy) return false;
     tsBusy = true;
-    const btn = document.getElementById('tsRefreshEventsBtn');
-    btn.disabled = true;
+    const buttons = ['tsRefreshEventsBtn', 'retrieveEventsBtn'].map((id) => document.getElementById(id));
+    buttons.forEach((b) => (b.disabled = true));
     tsSetStatus('Refreshing events...', '');
+    let ok = false;
     try {
       for (let i = 0; i < 100; i++) {
         const r = await tsPost('/api/ticketsource/events/refresh', { force: i === 0 });
@@ -914,15 +909,87 @@ document.addEventListener('DOMContentLoaded', async () => {
         await sleep(Math.max(500, r.retryAfterMs || 0));
       }
       tsSetStatus('Idle', 'Event list refreshed');
-      showToast('Event list refreshed', 'success');
+      ok = true;
     } catch (err) {
       tsSetStatus('Failed', err.message);
       showToast(err.message, 'error');
     } finally {
       tsBusy = false;
-      btn.disabled = false;
-      loadSync();
+      buttons.forEach((b) => (b.disabled = false));
     }
+    return ok;
+  }
+
+  document.getElementById('tsRefreshEventsBtn').addEventListener('click', async () => {
+    if (await refreshTsEvents()) showToast('Event list refreshed', 'success');
+    loadSync();
+    loadTsEventsPanel();
+  });
+
+  // ----- Events tab: TicketSource events with the archive filter -----
+  let tsEventsCache = [];
+
+  async function loadTsEventsPanel() {
+    try {
+      const res = await fetch('/api/ticketsource/events');
+      if (!res.ok) return;
+      const data = await res.json();
+      tsEventsCache = data.events || [];
+      renderTsEventsPanel();
+    } catch (err) {
+      console.error('Error loading TicketSource events panel:', err);
+    }
+  }
+
+  function renderTsEventsPanel() {
+    const filter = document.getElementById('eventsArchiveFilter').value;
+    const rows = tsEventsCache.filter((e) => (filter === 'archived' ? e.archived : filter === 'active' ? !e.archived : true));
+    const tbody = document.querySelector('#tsEventsOnEventsTable tbody');
+    if (!tsEventsCache.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Use "Retrieve events from TicketSource" to load the list.</td></tr>';
+      return;
+    }
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No events match this filter.</td></tr>';
+      return;
+    }
+    const canSync = currentUser && currentUser.role !== 'viewer';
+    const badge = { unsettled: 'badge-warning', settled: 'badge-success', archived: 'badge-neutral' };
+    tbody.innerHTML = rows.map((ev) => `
+      <tr>
+        <td><strong>${escapeHtml(ev.name || ev.id)}</strong><br><small style="color: var(--text-muted);">${escapeHtml(ev.id)}</small></td>
+        <td><span class="badge ${badge[ev.state] || 'badge-neutral'}">${escapeHtml(ev.state)}</span>${ev.archived && ev.settled ? ' <small>(also settled)</small>' : ''}</td>
+        <td>${ev.dates.length ? ev.dates.map((d) => formatDate(d.starts_at)).join('<br>') : '<span style="color: var(--text-muted);">not loaded</span>'}</td>
+        <td>${ev.bookings_imported}</td>
+        <td>${canSync ? `<button class="btn btn-secondary btn-sm events-download-btn" data-id="${escapeHtml(ev.id)}">Download bookings</button>` : ''}</td>
+      </tr>`).join('');
+    document.querySelectorAll('.events-download-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await syncTsEvent(btn.dataset.id, '');
+        loadTsEventsPanel();
+      });
+    });
+  }
+
+  document.getElementById('eventsArchiveFilter').addEventListener('change', renderTsEventsPanel);
+
+  document.getElementById('retrieveEventsBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('retrieveEventsBtn');
+    const summary = document.getElementById('retrieveEventsSummary');
+    summary.textContent = 'Retrieving events from TicketSource...';
+    btn.textContent = 'Retrieving...';
+    const ok = await refreshTsEvents();
+    btn.textContent = 'Retrieve events from TicketSource';
+    if (!ok) {
+      summary.textContent = 'Could not retrieve events. Nothing was changed in TicketSource (this is read-only).';
+      return;
+    }
+    await loadTsEventsPanel();
+    const archived = tsEventsCache.filter((e) => e.archived).length;
+    const settled = tsEventsCache.filter((e) => !e.archived && e.state === 'settled').length;
+    const unsettled = tsEventsCache.filter((e) => !e.archived && e.state === 'unsettled').length;
+    summary.textContent = `Retrieved ${tsEventsCache.length} events: ${unsettled} unsettled, ${settled} settled, ${archived} archived. Read-only: nothing is sent to TicketSource.`;
+    showToast(`Retrieved ${tsEventsCache.length} events from TicketSource`, 'success');
   });
 
   // ----------------------------------------------------
