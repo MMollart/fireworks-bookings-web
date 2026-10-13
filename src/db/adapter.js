@@ -33,9 +33,18 @@ export function wrapD1(d1) {
   return {
     prepare: (sql) => make(sql),
     async batch(statements) {
+      if (!statements.length) return;
       await d1.batch(statements.map((s) => s._d1()));
     },
   };
+}
+
+// Cloudflare D1 allows at most 100 bound parameters per statement; enforce it here so tests catch queries that would fail there.
+const D1_MAX_PARAMS = 100;
+function bound(passed, own) {
+  const list = passed.length ? passed : own;
+  if (list.length > D1_MAX_PARAMS) throw new Error(`D1 allows at most ${D1_MAX_PARAMS} bound parameters per statement (got ${list.length})`);
+  return list;
 }
 
 export function wrapSqlite(sqlite) {
@@ -44,13 +53,13 @@ export function wrapSqlite(sqlite) {
     params,
     bind: (...p) => make(sql, p),
     async get(...p) {
-      return sqlite.prepare(sql).get(...(p.length ? p : params));
+      return sqlite.prepare(sql).get(...bound(p, params));
     },
     async all(...p) {
-      return sqlite.prepare(sql).all(...(p.length ? p : params));
+      return sqlite.prepare(sql).all(...bound(p, params));
     },
     async run(...p) {
-      const r = sqlite.prepare(sql).run(...(p.length ? p : params));
+      const r = sqlite.prepare(sql).run(...bound(p, params));
       return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
     },
   });

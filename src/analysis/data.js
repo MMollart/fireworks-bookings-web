@@ -1,3 +1,5 @@
+import { withYear } from '../lib/eventName.js';
+
 /** Loads bookings, seats (tickets) and financial lines from the local database for a scope. */
 
 const NET_SIGN = 'CASE WHEN x.is_refund = 1 THEN -ABS(x.%) ELSE x.% END';
@@ -17,6 +19,14 @@ function scopeSql(scope, alias = 'd') {
   return { where: where.join(' AND '), params };
 }
 
+/** A TicketSource event's id and display name (with its year), or null. */
+export async function loadEventName(db, id) {
+  const e = await db.prepare('SELECT id, name FROM ts_events WHERE id = ?').get(id);
+  if (!e) return null;
+  const first = await db.prepare('SELECT MIN(starts_at) AS s FROM ts_dates WHERE event_id = ?').get(id);
+  return { id: e.id, name: withYear(e.name, first?.s) };
+}
+
 /** Events that have downloaded bookings, with their performances and download completeness. */
 export async function loadScopeOptions(db) {
   const events = await db
@@ -27,7 +37,11 @@ export async function loadScopeOptions(db) {
     )
     .all();
   const dates = await db.prepare('SELECT id, event_id, starts_at, last_synced_at, scan_state, cancelled FROM ts_dates ORDER BY starts_at').all();
-  return { events, dates };
+  const firstStart = new Map();
+  for (const d of dates) if (d.starts_at && !firstStart.has(d.event_id)) firstStart.set(d.event_id, d.starts_at);
+  const named = events.map((e) => ({ ...e, name: withYear(e.name, firstStart.get(e.id)), first_start: firstStart.get(e.id) || '' }));
+  named.sort((a, b) => b.first_start.localeCompare(a.first_start) || a.name.localeCompare(b.name)); // newest event first
+  return { events: named, dates };
 }
 
 export function isComplete(perf) {

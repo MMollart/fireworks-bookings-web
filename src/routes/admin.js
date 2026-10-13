@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { hashPassword, validatePasswordPolicy } from '../auth/passwords.js';
 import { destroyUserSessions } from '../auth/sessions.js';
+import { listTicketTypes, saveTicketType, deleteTicketType } from '../domain/ticketTypes.js';
+import { reindexCustomers } from '../domain/customers.js';
 
 const VALID_ROLES = ['admin', 'operator', 'viewer'];
 
@@ -95,6 +97,26 @@ export function adminRoutes() {
 
   r.post('/users/:id/reset-password', resetPassword);
   r.post('/users/:id/password', resetPassword);
+
+  // Ticket type dictionary: which reporting category each distinct TicketSource ticket type belongs to.
+  r.get('/ticket-types', async (c) => c.json(await listTicketTypes(c.get('db'))));
+
+  r.put('/ticket-types', async (c) => {
+    const { ticket_type, category } = await c.req.json().catch(() => ({}));
+    try {
+      return c.json({ success: true, entry: await saveTicketType(c.get('db'), ticket_type, category) });
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+  });
+
+  r.delete('/ticket-types', async (c) => {
+    const ok = await deleteTicketType(c.get('db'), c.req.query('type'));
+    return ok ? c.json({ success: true }) : c.json({ error: 'Ticket type is not in the dictionary' }, 404);
+  });
+
+  // Builds the customer search index for customers imported before it existed. Call until remaining = 0.
+  r.post('/customers/reindex', async (c) => c.json(await reindexCustomers(c.get('db'))));
 
   return r;
 }

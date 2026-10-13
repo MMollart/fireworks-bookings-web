@@ -16,7 +16,6 @@ import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
 import { eventRoutes } from './routes/events.js';
 import { bookingRoutes } from './routes/bookings.js';
-import { ticketRoutes } from './routes/tickets.js';
 import { customerRoutes } from './routes/customers.js';
 import { reportRoutes } from './routes/reports.js';
 import { ticketSourceRoutes } from './routes/ticketsource.js';
@@ -60,8 +59,6 @@ export function createApp(getDb) {
   app.route('/api/events', eventRoutes());
   app.use('/api/bookings/*', requireAuth);
   app.route('/api/bookings', bookingRoutes());
-  app.use('/api/tickets/*', requireAuth);
-  app.route('/api/tickets', ticketRoutes());
   app.use('/api/customers/*', requireAuth);
   app.route('/api/customers', customerRoutes());
   app.use('/api/reports/*', requireAuth);

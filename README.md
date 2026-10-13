@@ -1,7 +1,7 @@
 # Fireworks Bookings Web
 
-Scout Budget-style bookings app for fireworks events: admin-managed sign-in (no registration), events, bookings,
-tickets and gate check-in, discount codes, reports/CSV export and a TicketSource sync. Customer PII is encrypted at
+Scout Budget-style bookings app for fireworks events: admin-managed sign-in (no registration), a read-only view of
+TicketSource events, bookings and customers, analysis, discount codes, reports/CSV export and a TicketSource sync. Customer PII is encrypted at
 rest (AES-256-GCM, with an HMAC blind index for email lookup).
 
 **Stack:** Cloudflare Worker ([Hono](https://hono.dev)) + static assets (`public/`) + D1 (SQLite).
@@ -61,6 +61,16 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   optional sales-to-date cutoff and all-events average) and discount-code usage (by performance year, distinct bookings, case/diacritic/
   whitespace-insensitive code merging, unknown amounts shown as Unknown, reversal-only codes flagged). Periods the download does not
   cover show "No data", never zero. TicketSource supplies no currency, so amounts are recorded as GBP; the analysis keeps currencies separate.
-- New Event / New Booking create records in this app only; nothing is ever sent to TicketSource.
-- A daily cron (`wrangler.toml`) prunes expired sessions and rate-limit rows.
+- The app only displays what comes from TicketSource: there is no way to create events or bookings, and no ticket check-in
+  (tickets are scanned with the TicketSource app). Nothing is ever sent to TicketSource.
+- Event names are always shown with the year of the performance ("2026 Lydiard Fireworks & Bonfire Spectacular").
+- The **Overview** shows one event's figures and defaults to the latest event.
+- **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
+  customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search
+  index** catches up after a bulk import. D1 allows 100 bound parameters per statement, so id lists are sent in groups.
+- **Configuration** (admins): the ticket type dictionary maps each TicketSource ticket type to a reporting category (e.g. "Early Bird
+  Adult Ticket" and "Adult Ticket" are both "Adult"). Reports > Ticket Tier Distribution uses it; unmapped types appear under their own name.
+  TicketSource marks the extra seats of a Family ticket as "Standard"; they are seeded as "Family (included seats)".
+- A cron every 30 minutes (`wrangler.toml`, `src/ticketsource/auto.js`) re-reads the event list and incrementally syncs every unsettled
+  event (settled and archived events are left alone); once a day it also prunes expired sessions and rate-limit rows.
 - General API rate limiting is not built in; use a Cloudflare WAF rate-limiting rule if you need it.

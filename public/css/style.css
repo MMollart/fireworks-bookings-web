@@ -810,7 +810,11 @@ body {
 .notes li { margin-bottom: var(--space-1); }
 
 .chart-wrap { width: 100%; }
-.chart { width: 100%; height: auto; display: block; }
+.chart { width: 100%; height: auto; display: block; touch-action: pan-y; }
+.chart-readout { min-height: 24px; margin-bottom: var(--space-2); font-size: 14px; color: var(--ink); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-4); }
+.readout-item { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.row-selected td { background-color: var(--surface-tint); font-weight: 700; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-2); font-size: 14px; color: var(--ink-muted); }
 .legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
 .legend-swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }

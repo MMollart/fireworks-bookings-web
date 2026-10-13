@@ -79,48 +79,120 @@
     return 10 * pow;
   }
 
-  function renderChart(container, { labels, series, format, title }) {
-    const W = 920, H = 320, L = 64, R = 12, T = 12, B = 72;
+  // Design system colours: the selected event is spark orange, comparison is night purple.
+  const COLOR = { selected: '#ed5202', comparison: '#4d2176', average: '#8a7a99' };
+  const MAX_BAR_CATEGORIES = 6; // more date-based categories than this are drawn as a line
+
+  let lastChart = null;
+
+  function renderChart(container, opts) {
+    lastChart = { container, opts };
+    draw(container, opts);
+  }
+
+  function draw(container, { labels, series, format, title }) {
+    const W = Math.max(280, Math.floor(container.getBoundingClientRect().width || container.parentElement?.getBoundingClientRect().width || 640));
+    const narrow = W < 520;
+    const H = narrow ? 300 : 340;
+    const L = narrow ? 52 : 64, R = 14, T = 14, B = narrow ? 84 : 76;
     const plotW = W - L - R, plotH = H - T - B;
     const all = series.flatMap((s) => s.values).filter((v) => v !== null);
     const max = niceMax(Math.max(0, ...all));
     const n = labels.length;
-    const groupW = plotW / Math.max(1, n);
-    const k = series.length;
-    const barW = Math.max(1, (groupW * 0.78) / k);
+    const asLine = n > MAX_BAR_CATEGORIES;
     const y = (v) => T + plotH - (v / max) * plotH;
+    const slot = plotW / Math.max(1, n); // one category's width (bars) / spacing basis (labels)
+    const xCentre = (i) => (asLine ? (n === 1 ? L + plotW / 2 : L + (i * plotW) / (n - 1)) : L + i * slot + slot / 2);
+    const fontSize = narrow ? 12 : 12;
 
-    let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" class="chart">`;
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" class="chart">`;
     svg += `<defs><pattern id="nodata" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#d9cfe3"/></pattern></defs>`;
     for (let i = 0; i <= 4; i++) {
       const v = (max / 4) * i;
       svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#d9cfe3" stroke-width="1"/>`;
-      svg += `<text x="${L - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#5c5558">${esc(format(v))}</text>`;
+      svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="${fontSize}" fill="#5c5558">${esc(format(v))}</text>`;
     }
-    const step = Math.max(1, Math.ceil(n / 14));
+
+    // no-data spans (not downloaded: shown hatched, never as zero)
+    const spanW = asLine ? plotW / Math.max(1, n - 1) : slot;
     labels.forEach((label, i) => {
-      const gx = L + i * groupW;
-      series.forEach((s, j) => {
-        const v = s.values[i];
-        const x = gx + (groupW - barW * k) / 2 + j * barW;
-        if (v === null) {
-          svg += `<rect x="${x}" y="${T}" width="${Math.max(1, barW - 1)}" height="${plotH}" fill="url(#nodata)" opacity="0.7"><title>${esc(label)} - ${esc(s.name)}: No data (not downloaded)</title></rect>`;
-        } else {
-          const h = Math.max(v === 0 ? 0 : 1, (v / max) * plotH);
-          svg += `<rect x="${x}" y="${T + plotH - h}" width="${Math.max(1, barW - 1)}" height="${h}" fill="${s.color}"><title>${esc(label)} - ${esc(s.name)}: ${esc(format(v))}</title></rect>`;
-        }
-      });
-      if (i % step === 0) {
-        svg += `<text transform="translate(${gx + groupW / 2},${H - B + 14}) rotate(-35)" text-anchor="end" font-size="11" fill="#5c5558">${esc(label.length > 24 ? `${label.slice(0, 23)}…` : label)}</text>`;
+      if (series.some((s) => s.values[i] === null)) {
+        svg += `<rect x="${xCentre(i) - spanW / 2}" y="${T}" width="${spanW}" height="${plotH}" fill="url(#nodata)" opacity="0.6"><title>${esc(label)}: No data (not downloaded)</title></rect>`;
       }
     });
-    svg += `<line x1="${L}" x2="${W - R}" y1="${T + plotH}" y2="${T + plotH}" stroke="#8a7a99"/></svg>`;
+
+    if (asLine) {
+      series.forEach((s) => {
+        const segments = [];
+        let cur = [];
+        s.values.forEach((v, i) => {
+          if (v === null) { if (cur.length) segments.push(cur); cur = []; } else cur.push([xCentre(i), y(v)]);
+        });
+        if (cur.length) segments.push(cur);
+        for (const seg of segments) {
+          if (series.length === 1 && seg.length > 1) {
+            svg += `<path d="M${seg[0][0]},${T + plotH} ${seg.map((p) => `L${p[0]},${p[1]}`).join(' ')} L${seg[seg.length - 1][0]},${T + plotH} Z" fill="${s.color}" opacity="0.12"/>`;
+          }
+          svg += `<path d="${seg.map((p, k) => `${k ? 'L' : 'M'}${p[0]},${p[1]}`).join(' ')}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+          if (seg.length === 1) svg += `<circle cx="${seg[0][0]}" cy="${seg[0][1]}" r="3.5" fill="${s.color}"/>`;
+        }
+      });
+    } else {
+      const k = series.length;
+      const barW = Math.min(72, (slot * 0.7) / k);
+      labels.forEach((label, i) => {
+        series.forEach((s, j) => {
+          const v = s.values[i];
+          if (v === null) return;
+          const x = xCentre(i) - (barW * k) / 2 + j * barW;
+          const h = Math.max(v === 0 ? 0 : 1, (v / max) * plotH);
+          svg += `<rect x="${x}" y="${T + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" fill="${s.color}"><title>${esc(label)} - ${esc(s.name)}: ${esc(format(v))}</title></rect>`;
+        });
+      });
+    }
+
+    // x labels, thinned so they never overlap
+    const labelStep = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(plotW / 54))));
+    labels.forEach((label, i) => {
+      if (i % labelStep !== 0 && i !== n - 1) return;
+      if (i !== n - 1 && n - 1 - i < labelStep / 2) return;
+      svg += `<text transform="translate(${xCentre(i)},${T + plotH + 14}) rotate(-40)" text-anchor="end" font-size="${fontSize}" fill="#5c5558">${esc(label.length > 22 ? `${label.slice(0, 21)}…` : label)}</text>`;
+    });
+    svg += `<line x1="${L}" x2="${W - R}" y1="${T + plotH}" y2="${T + plotH}" stroke="#8a7a99"/>`;
+    svg += `<line class="chart-marker" x1="0" x2="0" y1="${T}" y2="${T + plotH}" stroke="#231f20" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+    svg += `<rect class="chart-hit" x="${L}" y="${T}" width="${plotW}" height="${plotH}" fill="transparent"/></svg>`;
 
     const legend = series
       .map((s) => `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)}</span>`)
       .join('');
-    container.innerHTML = `${svg}<div class="legend">${legend}<span class="legend-item"><span class="legend-swatch legend-nodata"></span>No data</span></div>`;
+    container.innerHTML = `<div class="chart-readout" role="status" aria-live="polite">Tap or hover the chart to read values</div>${svg}<div class="legend">${legend}<span class="legend-item"><span class="legend-swatch legend-nodata"></span>No data</span></div>`;
+
+    // Touch / mouse readout (a tooltip needs hover, which phones do not have)
+    const hit = container.querySelector('.chart-hit');
+    const marker = container.querySelector('.chart-marker');
+    const readout = container.querySelector('.chart-readout');
+    const show = (ev) => {
+      const box = hit.getBoundingClientRect();
+      const px = ev.clientX - box.left;
+      const i = Math.max(0, Math.min(n - 1, asLine ? Math.round((px / plotW) * (n - 1)) : Math.floor(px / slot)));
+      marker.setAttribute('x1', xCentre(i));
+      marker.setAttribute('x2', xCentre(i));
+      marker.setAttribute('visibility', 'visible');
+      readout.innerHTML = `<strong>${esc(labels[i])}</strong>: ${series
+        .map((s) => `<span class="readout-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)} ${s.values[i] === null ? 'No data' : esc(format(s.values[i]))}</span>`)
+        .join(' ')}`;
+    };
+    hit.addEventListener('pointerdown', show);
+    hit.addEventListener('pointermove', show);
   }
+
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (lastChart && document.body.contains(lastChart.container) && lastChart.container.offsetParent !== null) draw(lastChart.container, lastChart.opts);
+    }, 150);
+  });
 
   // ---------- shared scope ----------
   const dateOnly = (iso) => (iso ? new Date(iso).toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric' }) : 'date unknown');
@@ -256,6 +328,8 @@
       ['Net revenue', moneyCell(t.net)],
     ].map(([label, value]) => `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">Whole event${data.undated ? ' (includes undated bookings)' : ''}</div></div>`).join('');
 
+    $('analysisResults').style.display = '';
+
     // chart
     const rows = data.rows;
     const fmt = measure === 'gross' || measure === 'net' ? (v) => money(currency, v) : (v) => num(v);
@@ -263,7 +337,7 @@
     renderChart($('analysisChart'), {
       title: `${MEASURE_LABEL[measure]} chart`,
       labels: rows.map((r) => r.label.replace(/^Week of /, '')),
-      series: [{ name: MEASURE_LABEL[measure], color: '#4d2176', values: rows.map((r) => numericValue(measure, r, currency)) }],
+      series: [{ name: MEASURE_LABEL[measure], color: COLOR.selected, values: rows.map((r) => numericValue(measure, r, currency)) }],
       format: fmt,
     });
 
@@ -340,10 +414,11 @@
 
     const fmt = measure === 'gross' || measure === 'net' ? (v) => money(currency, v) : (v) => num(v);
     const series = [
-      { name: sel, color: '#4d2176', values: data.rows.map((r) => numericValue(measure, r.selected, currency)) },
-      { name: cmp, color: '#e1a313', values: data.rows.map((r) => numericValue(measure, r.comparison, currency)) },
+      { name: sel, color: COLOR.selected, values: data.rows.map((r) => numericValue(measure, r.selected, currency)) },
+      { name: cmp, color: COLOR.comparison, values: data.rows.map((r) => numericValue(measure, r.comparison, currency)) },
     ];
-    if (data.includeAverage) series.push({ name: `Average of ${data.averageEvents} events`, color: '#8a7a99', values: data.rows.map((r) => numericValue(measure, r.average, currency)) });
+    if (data.includeAverage) series.push({ name: `Average of ${data.averageEvents} events`, color: COLOR.average, values: data.rows.map((r) => numericValue(measure, r.average, currency)) });
+    $('analysisResults').style.display = '';
     $('analysisChartTitle').textContent = `${MEASURE_LABEL[measure]}: ${sel} vs ${cmp}`;
     renderChart($('analysisChart'), { title: `${MEASURE_LABEL[measure]} comparison chart`, labels: data.rows.map((r) => r.label), series, format: fmt });
 

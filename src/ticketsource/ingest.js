@@ -5,6 +5,7 @@
  */
 import { randomHex } from '../lib/bytes.js';
 import { encrypt, blindIndex } from '../crypto/encryption.js';
+import { searchIndexStatements } from '../domain/customers.js';
 
 const CURRENCY = 'GBP'; // the TicketSource API supplies no currency
 
@@ -89,7 +90,7 @@ export async function resolveCustomer(db, client, link, { ttlMs, now, force }) {
     address ? await encrypt(JSON.stringify(address)) : null,
   ];
 
-  const existing = await db.prepare('SELECT id FROM customers WHERE email_blind_index = ?').get(emailHash);
+  const existing = await db.prepare('SELECT id, search_indexed FROM customers WHERE email_blind_index = ?').get(emailHash);
   let customerId = existing?.id;
   if (customerId) {
     await db
@@ -109,6 +110,7 @@ export async function resolveCustomer(db, client, link, { ttlMs, now, force }) {
       .run(customerId, ...fields, iso, iso);
   }
 
+  await db.batch(await searchIndexStatements(db, customerId, name, email, { mark: !existing || !existing.search_indexed }));
   await db
     .prepare('INSERT OR REPLACE INTO ts_customer_cache (ts_customer_id, customer_id, fetched_at) VALUES (?, ?, ?)')
     .run(tsId, customerId, now);

@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (currentUser.role === 'admin') {
         document.getElementById('adminTab').style.display = 'inline-block';
+        document.getElementById('configTab').style.display = 'inline-block';
       }
 
       return true;
@@ -156,14 +157,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadDashboard();
         break;
       case 'events':
-        loadEvents();
         loadTsEventsPanel();
         break;
       case 'bookings':
+        loadEvents();
         loadBookings();
-        break;
-      case 'tickets':
-        loadTickets();
         break;
       case 'customers':
         loadCustomers();
@@ -178,6 +176,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       case 'discounts':
         if (window.FWAnalysis) window.FWAnalysis.show(tab);
         break;
+      case 'config':
+        if (currentUser && currentUser.role === 'admin') {
+          loadTicketTypes();
+        }
+        break;
       case 'admin':
         if (currentUser && currentUser.role === 'admin') {
           loadUsers();
@@ -189,72 +192,60 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ----------------------------------------------------
   // 1. Dashboard / Overview
   // ----------------------------------------------------
+  // The event is chosen here; the first load shows the latest event.
+  let dashboardEventId = '';
+
   async function loadDashboard() {
     try {
-      const res = await fetch('/api/reports/dashboard');
+      const res = await fetch(`/api/reports/dashboard${dashboardEventId ? `?eventId=${encodeURIComponent(dashboardEventId)}` : ''}`);
       if (!res.ok) return;
       const data = await res.json();
+
+      const select = document.getElementById('dashboardEvent');
+      const events = data.events || [];
+      select.innerHTML = events.map(ev => `<option value="${escapeHtml(ev.id)}">${escapeHtml(ev.name)}</option>`).join('')
+        || '<option value="">No events yet</option>';
+      dashboardEventId = data.selectedEventId || '';
+      select.value = dashboardEventId;
+      select.disabled = !events.length;
 
       const rev = data.financials?.gross_revenue || 0;
       const disc = data.financials?.total_discounts || 0;
       const aov = data.financials?.aov || 0;
       const bCount = data.financials?.confirmed_bookings || 0;
-      const tSold = data.tickets?.tickets_sold || 0;
-      const tChecked = data.tickets?.tickets_checked_in || 0;
-      const checkInRate = data.tickets?.checkInRate || 0;
-      const cCount = data.customers?.total || 0;
 
       document.getElementById('kpiRevenue').textContent = formatCurrency(rev);
       document.getElementById('kpiDiscounts').textContent = `Discounts: ${formatCurrency(disc)}`;
       document.getElementById('kpiBookings').textContent = bCount;
       document.getElementById('kpiAov').textContent = `Average Order: ${formatCurrency(aov)}`;
-      document.getElementById('kpiTickets').textContent = tSold;
-      document.getElementById('kpiCheckInRate').textContent = `Check-in: ${checkInRate}% (${tChecked} checked)`;
-      document.getElementById('kpiCustomers').textContent = cCount;
+      document.getElementById('kpiTickets').textContent = data.tickets?.tickets_sold || 0;
+      document.getElementById('kpiTicketBreakdown').textContent =
+        (data.tickets?.breakdown || []).slice(0, 4).map(t => `${t.ticket_type} ${t.count}`).join(' · ') || '\u00a0';
+      document.getElementById('kpiCustomers').textContent = data.customers?.total || 0;
 
-      // Render events in overview
-      renderOverviewEvents(data.events || []);
-
-      // Load recent bookings
-      const bRes = await fetch('/api/bookings?limit=5');
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        renderOverviewBookings(bData.bookings || []);
-      }
+      renderOverviewEvents(events, dashboardEventId);
+      renderOverviewBookings(data.recentBookings || []);
     } catch (err) {
       console.error('Error loading dashboard:', err);
     }
   }
 
-  function renderOverviewEvents(events) {
+  function renderOverviewEvents(events, selectedId) {
     const tbody = document.querySelector('#overviewEventsTable tbody');
     if (!events.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No events found. Click "Events" tab to create one.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No events yet. Use "Retrieve events from TicketSource" on the Events tab.</td></tr>';
       return;
     }
 
-    tbody.innerHTML = events.map(ev => {
-      const sold = ev.tickets_sold || 0;
-      const cap = ev.capacity || 0;
-      const pct = cap ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
-      return `
-        <tr>
-          <td><strong>${escapeHtml(ev.name)}</strong></td>
-          <td>${formatDate(ev.event_date)}</td>
-          <td>${escapeHtml(ev.venue || '—')}</td>
-          <td>${Number(ev.capacity) || '—'}</td>
-          <td>${sold}</td>
-          <td>
-            <div class="progress-bar-bg" title="${pct}% sold">
-              <div class="progress-bar-fill" style="width: ${pct}%"></div>
-            </div>
-            <small style="color: var(--text-muted);">${pct}%</small>
-          </td>
-          <td>${formatCurrency(ev.gross_revenue || 0)}</td>
-          <td>${getStatusBadge(ev.status)}</td>
-        </tr>
-      `;
-    }).join('');
+    tbody.innerHTML = events.map(ev => `
+      <tr${ev.id === selectedId ? ' class="row-selected"' : ''}>
+        <td><strong>${escapeHtml(ev.name)}</strong></td>
+        <td>${formatDate(ev.starts_at)}</td>
+        <td>${ev.bookings}</td>
+        <td>${ev.tickets_sold}</td>
+        <td>${formatCurrency(ev.gross_revenue || 0)}</td>
+      </tr>
+    `).join('');
   }
 
   function renderOverviewBookings(bookings) {
@@ -271,11 +262,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         <td>${escapeHtml(b.customer_name || 'Guest')}</td>
         <td>${b.ticket_count || 0}</td>
         <td>${formatCurrency(b.total_price)}</td>
-        <td>${formatDate(b.created_at)}</td>
+        <td>${formatDate(b.booking_date)}</td>
         <td>${getStatusBadge(b.status)}</td>
       </tr>
     `).join('');
   }
+
+  document.getElementById('dashboardEvent').addEventListener('change', (e) => {
+    dashboardEventId = e.target.value;
+    loadDashboard();
+  });
 
   document.getElementById('refreshDashboardBtn').addEventListener('click', () => {
     loadDashboard();
@@ -283,120 +279,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // ----------------------------------------------------
-  // 2. Events Management
+  // 2. Events (TicketSource events are listed by the TicketSource panel below)
   // ----------------------------------------------------
   async function loadEvents() {
     try {
       const res = await fetch('/api/events');
       if (!res.ok) return;
-      const data = await res.json();
-      allEvents = data.events || [];
-
-      // Update dropdowns in booking modal and booking filter
-      updateEventDropdowns(allEvents);
-
-      const tbody = document.querySelector('#eventsTable tbody');
-      if (!allEvents.length) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">No events configured.</td></tr>';
-        return;
+      allEvents = (await res.json()).events || [];
+      const filter = document.getElementById('bookingEventFilter');
+      if (filter) {
+        const chosen = filter.value;
+        filter.innerHTML = '<option value="">All Events</option>' + allEvents.map(e => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
+        filter.value = chosen;
       }
-
-      tbody.innerHTML = allEvents.map(ev => {
-        const sold = ev.tickets_sold || 0;
-        const cap = ev.capacity || 0;
-        const pct = cap ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
-        return `
-          <tr>
-            <td><strong>${escapeHtml(ev.name)}</strong></td>
-            <td>${formatDate(ev.event_date)}</td>
-            <td>${escapeHtml(ev.venue || '—')}</td>
-            <td>${escapeHtml(ev.gates_open || '—')} / ${escapeHtml(ev.display_time || '—')}</td>
-            <td>${Number(ev.capacity) || '—'}</td>
-            <td>${sold} (${pct}%)</td>
-            <td>${formatCurrency(ev.gross_revenue || 0)}</td>
-            <td>${getStatusBadge(ev.status)}</td>
-            <td>
-              <button class="btn btn-secondary btn-sm toggle-event-status" data-id="${escapeHtml(ev.id)}" data-status="${escapeHtml(ev.status)}">
-                ${ev.status === 'active' ? 'Cancel Event' : 'Reactivate'}
-              </button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-
-      document.querySelectorAll('.toggle-event-status').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const id = btn.dataset.id;
-          const current = btn.dataset.status;
-          const next = current === 'active' ? 'cancelled' : 'active';
-          const updateRes = await fetch(`/api/events/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: next })
-          });
-          if (updateRes.ok) {
-            showToast(`Event updated to ${next}`, 'success');
-            loadEvents();
-          } else {
-            showToast('Failed to update event', 'error');
-          }
-        });
-      });
     } catch (err) {
       console.error('Error loading events:', err);
     }
   }
-
-  function updateEventDropdowns(events) {
-    const bookingEventSelect = document.getElementById('bookingEventSelect');
-    const bookingEventFilter = document.getElementById('bookingEventFilter');
-
-    const options = events.map(e => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.name)}</option>`).join('');
-    if (bookingEventSelect) {
-      bookingEventSelect.innerHTML = options || '<option value="">No events available</option>';
-    }
-
-    if (bookingEventFilter) {
-      bookingEventFilter.innerHTML = `<option value="">All Events</option>${options}`;
-    }
-  }
-
-  document.getElementById('openNewEventModalBtn').addEventListener('click', () => {
-    document.getElementById('newEventForm').reset();
-    openModal('newEventModal');
-  });
-
-  document.getElementById('newEventForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const payload = {
-      name: document.getElementById('eventNameInput').value.trim(),
-      event_date: document.getElementById('eventDateInput').value,
-      venue: document.getElementById('eventVenueInput').value.trim(),
-      capacity: Number(document.getElementById('eventCapacityInput').value),
-      gates_open: document.getElementById('eventGatesInput').value.trim() || null,
-      display_time: document.getElementById('eventDisplayInput').value.trim() || null,
-      status: 'active'
-    };
-
-    try {
-      const res = await fetch('/api/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || data.message || 'Error creating event', 'error');
-        return;
-      }
-
-      showToast('Event created successfully', 'success');
-      closeModal('newEventModal');
-      loadEvents();
-    } catch {
-      showToast('Failed to connect to server', 'error');
-    }
-  });
 
   // ----------------------------------------------------
   // 3. Bookings
@@ -418,6 +317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!res.ok) return;
       const data = await res.json();
       allBookings = data.bookings || [];
+      document.getElementById('bookingSearchHint').hidden = !data.tooShort;
 
       const tbody = document.querySelector('#bookingsTable tbody');
       if (!allBookings.length) {
@@ -473,15 +373,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('bookingDetailTitle').textContent = `Booking: ${b.reference}`;
 
       let ticketListHtml = tickets.map(t => `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color);">
-          <div>
-            <code>${escapeHtml(t.barcode)}</code> — <strong>${escapeHtml(t.ticket_type)}</strong> (${formatCurrency(t.price)})${
-              t.attendee ? ` — ${escapeHtml([t.attendee.first_name, t.attendee.last_name].filter(Boolean).join(' ') || t.attendee.email || '')}` : ''
-            }
-          </div>
-          <div>
-            ${t.is_checked_in ? `<span class="badge badge-success">Checked in ${formatDate(t.checked_in_at)}</span>` : `<span class="badge badge-neutral">Not checked in</span>`}
-          </div>
+        <div style="padding: 0.5rem 0; border-bottom: 1px solid var(--border-color);">
+          <strong>${escapeHtml(String(t.ticket_type || '').replace(/\s+/g, ' ').trim())}</strong>${
+            t.attendee ? ` — ${escapeHtml([t.attendee.first_name, t.attendee.last_name].filter(Boolean).join(' ') || t.attendee.email || '')}` : ''
+          }
         </div>
       `).join('');
 
@@ -532,160 +427,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  document.getElementById('openNewBookingModalBtn').addEventListener('click', async () => {
-    if (!allEvents.length) {
-      await loadEvents();
-    }
-    document.getElementById('newBookingForm').reset();
-    openModal('newBookingModal');
-  });
-
-  document.getElementById('newBookingForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const eventSelect = document.getElementById('bookingEventSelect');
-    const typeSelect = document.getElementById('ticketTypeSelect');
-    const qty = Number(document.getElementById('ticketQtyInput').value) || 1;
-    const price = Number(typeSelect.options[typeSelect.selectedIndex].dataset.price) || 10;
-    const typeName = typeSelect.value;
-
-    const tickets = [];
-    for (let i = 0; i < qty; i++) {
-      tickets.push({ ticket_type: typeName, price });
-    }
-
-    const payload = {
-      event_id: eventSelect.value,
-      customer: {
-        name: document.getElementById('custNameInput').value.trim(),
-        email: document.getElementById('custEmailInput').value.trim(),
-        phone: document.getElementById('custPhoneInput').value.trim() || null,
-        postcode: document.getElementById('custPostcodeInput').value.trim() || null,
-      },
-      tickets,
-      discount_code: document.getElementById('bookingDiscountInput').value.trim() || null,
-      payment_method: 'manual',
-    };
-
-    try {
-      const res = await fetch('/api/bookings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || data.message || 'Failed to create booking', 'error');
-        return;
-      }
-
-      showToast(`Booking ${data.booking.reference} created!`, 'success');
-      closeModal('newBookingModal');
-      loadBookings();
-    } catch {
-      showToast('Network error creating booking', 'error');
-    }
-  });
-
-  // ----------------------------------------------------
-  // 4. Tickets & Gate Check-In
-  // ----------------------------------------------------
-  const checkInForm = document.getElementById('checkInForm');
-  const barcodeInput = document.getElementById('barcodeInput');
-  const checkInResult = document.getElementById('checkInResult');
-
-  checkInForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const barcode = barcodeInput.value.trim();
-    if (!barcode) return;
-
-    checkInResult.style.display = 'block';
-    checkInResult.innerHTML = '<div style="color: var(--text-muted);">Validating ticket barcode...</div>';
-
-    try {
-      const res = await fetch('/api/tickets/checkin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode })
-      });
-      const data = await res.json();
-
-      if (res.status === 200 && data.success) {
-        checkInResult.innerHTML = `
-          <div style="background-color: var(--success-bg); border: 1px solid var(--success); color: var(--success); padding: 1rem; border-radius: var(--radius-sm);">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Valid Ticket - Entry Approved</h4>
-            <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
-            <p style="margin: 0;"><strong>Type:</strong> ${escapeHtml(data.ticket.ticket_type)} (${formatCurrency(data.ticket.price)})</p>
-            <p style="margin: 0;"><strong>Event:</strong> ${escapeHtml(data.ticket.event_name || '—')}</p>
-            <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.ticket.booking_reference || '—')}</p>
-          </div>
-        `;
-        showToast('Ticket checked in successfully', 'success');
-        barcodeInput.value = '';
-        loadTickets();
-      } else if (res.status === 409 && data.ticket?.already_checked_in) {
-        checkInResult.innerHTML = `
-          <div style="background-color: var(--warning-bg); border: 1px solid var(--spark-gold); color: var(--ink); padding: 1rem; border-radius: var(--radius-sm);">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Already Checked In</h4>
-            <p style="margin: 0;">This ticket was already scanned at: <strong>${formatDate(data.ticket.checked_in_at)}</strong></p>
-            <p style="margin: 0;"><strong>Barcode:</strong> <code>${escapeHtml(data.ticket.barcode)}</code></p>
-            <p style="margin: 0;"><strong>Booking:</strong> ${escapeHtml(data.ticket.booking_reference || '—')}</p>
-          </div>
-        `;
-        showToast('Ticket already checked in!', 'warning');
-      } else {
-        checkInResult.innerHTML = `
-          <div style="background-color: var(--danger-bg); border: 1px solid var(--danger); color: var(--danger); padding: 1rem; border-radius: var(--radius-sm);">
-            <h4 style="margin: 0 0 0.25rem 0; font-size: 1.1rem;">Invalid Ticket</h4>
-            <p style="margin: 0;">${escapeHtml(data.error || data.message || 'Ticket not found or invalid.')}</p>
-          </div>
-        `;
-        showToast(data.error || data.message || 'Invalid barcode', 'error');
-      }
-    } catch {
-      checkInResult.innerHTML = `<div class="text-danger">Network error validating barcode.</div>`;
-    }
-  });
-
-  async function loadTickets() {
-    try {
-      const search = document.getElementById('ticketSearchInput').value.trim();
-      const checkedIn = document.getElementById('ticketCheckedInFilter').value;
-
-      let url = '/api/tickets?limit=100';
-      if (search) url += `&search=${encodeURIComponent(search)}`;
-      if (checkedIn) url += `&isCheckedIn=${encodeURIComponent(checkedIn)}`;
-
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const data = await res.json();
-      const tickets = data.tickets || [];
-
-      const tbody = document.querySelector('#ticketsTable tbody');
-      if (!tickets.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No tickets matching filter.</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = tickets.map(t => `
-        <tr>
-          <td><code>${escapeHtml(t.barcode)}</code></td>
-          <td><code>${escapeHtml(t.booking_reference)}</code></td>
-          <td>${escapeHtml(t.event_name || '—')}</td>
-          <td><strong>${escapeHtml(t.ticket_type)}</strong></td>
-          <td>${formatCurrency(t.price)}</td>
-          <td>${t.is_checked_in ? '<span class="badge badge-success">Checked In</span>' : '<span class="badge badge-neutral">Not Used</span>'}</td>
-          <td>${formatDate(t.checked_in_at)}</td>
-        </tr>
-      `).join('');
-    } catch (err) {
-      console.error('Error loading tickets:', err);
-    }
-  }
-
-  document.getElementById('ticketSearchInput').addEventListener('input', debounce(loadTickets, 300));
-  document.getElementById('ticketCheckedInFilter').addEventListener('change', loadTickets);
-
   // ----------------------------------------------------
   // 5. Customers
   // ----------------------------------------------------
@@ -699,6 +440,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!res.ok) return;
       const data = await res.json();
       const customers = data.customers || [];
+      document.getElementById('customerSearchHint').hidden = !data.tooShort;
 
       const tbody = document.querySelector('#customersTable tbody');
       if (!customers.length) {
@@ -725,49 +467,63 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('customerSearchInput').addEventListener('input', debounce(loadCustomers, 300));
 
   // ----------------------------------------------------
-  // 6. Reports & Analysis
+  // 6. Reports
   // ----------------------------------------------------
+  let reportsEventId = '';
+
   async function loadReports() {
     try {
-      // 1. Ticket tier breakdown
-      const tRes = await fetch('/api/reports/tickets');
+      // Event selector: newest first, "All events" last. The first visit shows the latest event.
+      const select = document.getElementById('reportsEvent');
+      if (!select.options.length) {
+        const eRes = await fetch('/api/reports/events');
+        if (eRes.ok) {
+          const events = (await eRes.json()).events || [];
+          select.innerHTML = events.map(ev => `<option value="${escapeHtml(ev.id)}">${escapeHtml(ev.name)}</option>`).join('')
+            + '<option value="all">All events</option>';
+          reportsEventId = events[0]?.id || 'all';
+          select.value = reportsEventId;
+        }
+      }
+      const eventId = select.value || 'all';
+      document.getElementById('exportBookingsLink').href = `/api/reports/export.csv?eventId=${encodeURIComponent(eventId)}`;
+
+      // 1. Ticket categories (ticket type dictionary)
+      const tRes = await fetch(`/api/reports/tickets?eventId=${encodeURIComponent(eventId)}`);
       if (tRes.ok) {
-        const tData = await tRes.json();
-        const breakdown = tData.breakdown || [];
+        const breakdown = (await tRes.json()).breakdown || [];
         const tbody = document.querySelector('#ticketTypeBreakdownTable tbody');
         if (!breakdown.length) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No ticket sales recorded yet.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No ticket sales downloaded for this selection.</td></tr>';
         } else {
           tbody.innerHTML = breakdown.map(item => `
             <tr>
-              <td><strong>${escapeHtml(item.ticket_type)}</strong></td>
+              <td><strong>${escapeHtml(item.ticket_type)}</strong>${item.unmapped ? ' <span class="badge badge-warning" title="Not in the ticket type dictionary">not mapped</span>' : ''}</td>
               <td>${item.count}</td>
               <td>${formatCurrency(item.total_revenue)}</td>
-              <td>${item.checked_in_count}</td>
+              <td><small>${item.types.map(escapeHtml).join('<br>')}</small></td>
             </tr>
           `).join('');
         }
       }
 
-      // 2. Discount codes
-      const dRes = await fetch('/api/reports/discounts');
+      // 2. Discount codes (from the downloaded transaction lines)
+      const dRes = await fetch(`/api/reports/discounts?eventId=${encodeURIComponent(eventId)}`);
       if (dRes.ok) {
-        const dData = await dRes.json();
-        const discounts = dData.discounts || [];
+        const d = await dRes.json();
         const tbody = document.querySelector('#discountsTable tbody');
-        if (!discounts.length) {
-          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No discount codes found.</td></tr>';
+        if (d.state !== 'ok') {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">${
+            d.state === 'no_bookings' ? 'No bookings downloaded for this selection.' : 'No booking in this selection used a discount code.'
+          }</td></tr>`;
         } else {
-          tbody.innerHTML = discounts.map(d => `
+          tbody.innerHTML = d.rows.map(r => `
             <tr>
-              <td><code>${escapeHtml(d.code)}</code></td>
-              <td>${escapeHtml(d.description || '—')}</td>
-              <td><span class="badge badge-neutral">${escapeHtml(d.discount_type)}</span></td>
-              <td>${d.discount_type === 'percent' ? `${d.discount_value}%` : formatCurrency(d.discount_value)}</td>
-              <td>${d.times_used || 0}</td>
-              <td>${formatCurrency(d.total_savings_generated || 0)}</td>
-              <td>${formatCurrency(d.total_revenue_associated || 0)}</td>
-              <td>${getStatusBadge(d.is_active ? 'active' : 'disabled')}</td>
+              <td>${escapeHtml(r.yearLabel)}</td>
+              <td><code>${escapeHtml(r.code)}</code></td>
+              <td>${r.uses}</td>
+              <td>${r.total === null ? '<span class="no-data" title="TicketSource did not supply an amount">Unknown</span>' : formatCurrency(r.total)}</td>
+              <td>${r.notes.length ? `<ul class="notes">${r.notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>` : '—'}</td>
             </tr>
           `).join('');
         }
@@ -776,6 +532,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.error('Error loading reports:', err);
     }
   }
+
+  document.getElementById('reportsEvent').addEventListener('change', loadReports);
 
   // ----------------------------------------------------
   // 7. TicketSource (read-only import)
@@ -820,6 +578,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('tsRateSub').textContent = data.rate.blockedUntil
         ? `Paused by TicketSource until ${formatDate(data.rate.blockedUntil)}`
         : 'Limit is 240 calls/min; this app stays below it';
+      const auto = data.autoRefresh;
+      const autoResult = auto && auto.lastResult;
+      document.getElementById('tsAutoRefresh').textContent = auto
+        ? `Unsettled events are refreshed automatically every ${auto.everyMinutes} minutes. ${
+            auto.lastRunAt
+              ? `Last run ${formatDate(auto.lastRunAt)}${autoResult ? `: ${autoResult.status === 'ok' ? `${autoResult.imported} bookings imported or updated` : autoResult.status === 'skipped' ? `skipped (${autoResult.reason})` : `${autoResult.status}${autoResult.error ? ` (${autoResult.error})` : ''}`}` : ''}.`
+              : 'It has not run yet.'
+          }`
+        : '';
       document.getElementById('tsStateHelp').textContent =
         'Status comes from TicketSource: unsettled, settled (its own settled flag) or archived. Settled events are hidden by TicketSource unless asked for; refreshing the list asks for them.';
 
@@ -1001,6 +768,103 @@ document.addEventListener('DOMContentLoaded', async () => {
     const unsettled = tsEventsCache.filter((e) => !e.archived && e.state === 'unsettled').length;
     summary.textContent = `Retrieved ${tsEventsCache.length} events: ${unsettled} unsettled, ${settled} settled, ${archived} archived. Read-only: nothing is sent to TicketSource.`;
     showToast(`Retrieved ${tsEventsCache.length} events from TicketSource`, 'success');
+  });
+
+  // ----------------------------------------------------
+  // Configuration: ticket type dictionary + customer search index
+  // ----------------------------------------------------
+  async function loadTicketTypes() {
+    try {
+      const res = await fetch('/api/admin/ticket-types');
+      if (!res.ok) return;
+      const { types, categories } = await res.json();
+
+      document.getElementById('ttCategoryList').innerHTML = categories.map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+      document.getElementById('ttTypeList').innerHTML = types.map(t => `<option value="${escapeHtml(t.ticket_type)}"></option>`).join('');
+      const unmapped = types.filter(t => !t.category);
+      document.getElementById('ticketTypeSummary').textContent = unmapped.length
+        ? `${unmapped.length} ticket type${unmapped.length === 1 ? ' has' : 's have'} no category yet. Until mapped, ${unmapped.length === 1 ? 'it appears' : 'they appear'} under ${unmapped.length === 1 ? 'its' : 'their'} own name in Reports.`
+        : `All ${types.length} ticket types are mapped.`;
+
+      const tbody = document.querySelector('#ticketTypesTable tbody');
+      tbody.innerHTML = types.map((t, i) => `
+        <tr data-type="${escapeHtml(t.ticket_type)}">
+          <td>${escapeHtml(t.ticket_type)}</td>
+          <td>${t.tickets}</td>
+          <td>
+            <input type="text" class="search-input tt-category" list="ttCategoryList" maxlength="80" aria-label="Category for ${escapeHtml(t.ticket_type)}"
+              value="${escapeHtml(t.category || '')}" placeholder="${t.suggested ? escapeHtml(`Suggested: ${t.suggested}`) : 'Category'}" data-suggested="${escapeHtml(t.suggested || '')}">
+          </td>
+          <td>
+            <button class="btn btn-primary btn-sm tt-save" data-i="${i}">Save</button>
+            ${t.category ? '<button class="btn btn-secondary btn-sm tt-remove">Remove</button>' : (t.suggested ? '<button class="btn btn-secondary btn-sm tt-use-suggestion">Use suggestion</button>' : '')}
+          </td>
+        </tr>
+      `).join('');
+
+      const save = async (type, category) => {
+        const r = await fetch('/api/admin/ticket-types', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket_type: type, category })
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) return showToast(body.error || 'Could not save', 'error');
+        showToast('Saved', 'success');
+        loadTicketTypes();
+      };
+
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const type = tr.dataset.type;
+        const input = tr.querySelector('.tt-category');
+        tr.querySelector('.tt-save').addEventListener('click', () => save(type, input.value));
+        tr.querySelector('.tt-use-suggestion')?.addEventListener('click', () => save(type, input.dataset.suggested));
+        tr.querySelector('.tt-remove')?.addEventListener('click', async () => {
+          const r = await fetch(`/api/admin/ticket-types?type=${encodeURIComponent(type)}`, { method: 'DELETE' });
+          if (r.ok) { showToast('Removed from the dictionary', 'success'); loadTicketTypes(); } else showToast('Could not remove', 'error');
+        });
+      });
+    } catch (err) {
+      console.error('Error loading ticket types:', err);
+    }
+  }
+
+  document.getElementById('ticketTypeForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ticket_type = document.getElementById('ttType').value;
+    const category = document.getElementById('ttCategory').value;
+    const r = await fetch('/api/admin/ticket-types', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket_type, category })
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) return showToast(body.error || 'Could not save', 'error');
+    document.getElementById('ticketTypeForm').reset();
+    showToast('Saved', 'success');
+    loadTicketTypes();
+  });
+
+  document.getElementById('reindexBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('reindexBtn');
+    const status = document.getElementById('reindexStatus');
+    btn.disabled = true;
+    try {
+      let total = 0;
+      for (let i = 0; i < 1000; i++) {
+        const res = await fetch('/api/admin/customers/reindex', { method: 'POST' });
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        const r = await res.json();
+        total += r.indexed;
+        status.textContent = `Indexed ${total} customers; ${r.remaining} to go...`;
+        if (r.remaining === 0 || r.indexed === 0) break;
+      }
+      status.textContent = `Customer search index is up to date (${total} customers indexed just now).`;
+    } catch (err) {
+      status.textContent = `Stopped: ${err.message}. Run it again to continue.`;
+    } finally {
+      btn.disabled = false;
+    }
   });
 
   // ----------------------------------------------------

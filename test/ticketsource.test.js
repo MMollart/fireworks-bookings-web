@@ -8,7 +8,6 @@ import { refreshEvents, listEventSummaries, eventState } from '../src/ticketsour
 import { syncEventStep } from '../src/ticketsource/engine.js';
 import { summariseLines, ticketPrices } from '../src/ticketsource/ingest.js';
 import { getBookingById, listBookings } from '../src/domain/bookings.js';
-import { checkInTicket } from '../src/domain/tickets.js';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-11-20T12:00:00Z');
@@ -210,16 +209,6 @@ describe('TicketSource integration', () => {
     assert.ok(steps.length > 2, 'needed several steps');
     assert.equal(steps.at(-1).done, true);
     assert.equal(steps.reduce((n, x) => n + x.imported, 0), 5); // every booking re-read exactly once
-  });
-
-  test('re-importing keeps gate check-in state', async () => {
-    await refresh();
-    await runToCompletion('evt-live');
-    const ticket = await db.prepare("SELECT barcode FROM tickets WHERE booking_id IN (SELECT id FROM bookings WHERE reference = 'REF001') LIMIT 1").get();
-    assert.equal((await checkInTicket(db, ticket.barcode)).success, true);
-    await runToCompletion('evt-live', { mode: 'force' });
-    const again = await checkInTicket(db, ticket.barcode);
-    assert.equal(again.already_checked_in, true);
   });
 
   test('a small call budget spreads one sync over several resumable steps', async () => {

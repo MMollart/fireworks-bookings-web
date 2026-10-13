@@ -1,93 +1,5 @@
-import { randomHex, randomInt } from '../lib/bytes.js';
-import { upsertCustomer } from './customers.js';
-import { getDiscountByCode, calculateDiscount, buildDiscountUsageUpdate } from './discounts.js';
-import { buildTicketInsert } from './tickets.js';
+import { matchingCustomerIds } from './customers.js';
 import { decrypt } from '../crypto/encryption.js';
-
-export async function createBooking(db, data) {
-  const eventId = data.eventId || data.event_id;
-  if (!eventId) throw new Error('Event ID is required');
-  if (!data.customer || !data.customer.email) throw new Error('Customer information with valid email is required');
-  if (!data.tickets || !Array.isArray(data.tickets) || data.tickets.length === 0) {
-    throw new Error('At least one ticket is required for booking');
-  }
-
-  const event = await db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
-  if (!event) throw new Error('Event not found');
-
-  // Upsert customer (personal data encrypted at rest)
-  const customer = await upsertCustomer(db, data.customer);
-
-  let subtotal = 0;
-  for (const t of data.tickets) subtotal += parseFloat(t.price || 0);
-
-  let discountCodeId = null;
-  let discountAmount = 0;
-  const rawDiscountCode = data.discountCode || data.discount_code;
-  if (rawDiscountCode) {
-    const discount = await getDiscountByCode(db, rawDiscountCode);
-    if (discount && discount.is_active) {
-      discountCodeId = discount.id;
-      discountAmount = calculateDiscount(discount, subtotal).discountAmount;
-    }
-  }
-
-  const totalPrice = Math.max(0, parseFloat((subtotal - discountAmount).toFixed(2)));
-  const bookingId = data.id || `bk_${randomHex(6)}`;
-  const reference = data.reference || data.booking_reference || `FB-${randomInt(100000, 1000000)}`;
-  const now = new Date().toISOString();
-  const bookingDate = data.bookingDate || data.booking_date || now;
-  const status = data.status || 'confirmed';
-
-  // D1 has no interactive transactions: booking, tickets and discount usage go in one atomic batch.
-  const statements = [
-    db
-      .prepare(
-        `INSERT INTO bookings (
-           id, reference, event_id, customer_id, booking_date, status,
-           subtotal, discount_code_id, discount_amount, total_price,
-           payment_method, payment_reference, notes, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        bookingId, reference, eventId, customer.id, bookingDate, status,
-        subtotal, discountCodeId, discountAmount, totalPrice,
-        data.paymentMethod || data.payment_method || 'card',
-        data.paymentReference || data.payment_reference || null,
-        data.notes || null, now, now
-      ),
-  ];
-
-  for (const t of data.tickets) {
-    statements.push(
-      buildTicketInsert(db, {
-        booking_id: bookingId,
-        event_id: eventId,
-        ticket_type: t.ticketType || t.ticket_type || 'Standard',
-        price: t.price || 0,
-        barcode: t.barcode,
-      }).stmt
-    );
-  }
-
-  if (status === 'confirmed' && discountCodeId) {
-    statements.push(buildDiscountUsageUpdate(db, discountCodeId, discountAmount, totalPrice));
-  }
-
-  await db.batch(statements);
-
-  const result = await getBookingById(db, bookingId);
-  result.booking_reference = result.reference;
-  result.subtotal_amount = result.subtotal;
-  result.total_amount = result.total_price;
-  result.booking = {
-    ...result,
-    booking_reference: result.reference,
-    subtotal_amount: result.subtotal,
-    total_amount: result.total_price,
-  };
-  return result;
-}
 
 export async function getBookingById(db, id) {
   const row = await db.prepare(`
@@ -150,51 +62,20 @@ export async function getBookingById(db, id) {
   };
 }
 
-export async function listBookings(db, options = {}) {
-  let sql = `
-    SELECT 
-      b.*,
-      e.name AS event_name,
-      c.name_encrypted, c.email_encrypted, c.phone_encrypted, c.postcode_encrypted,
-      d.code AS discount_code,
-      COUNT(t.id) AS ticket_count
-    FROM bookings b
-    JOIN events e ON b.event_id = e.id
-    JOIN customers c ON b.customer_id = c.id
-    LEFT JOIN discount_codes d ON b.discount_code_id = d.id
-    LEFT JOIN tickets t ON b.id = t.booking_id
-  `;
+const LIST_SELECT = `
+  SELECT b.*, e.name AS event_name,
+         c.name_encrypted, c.email_encrypted, c.phone_encrypted, c.postcode_encrypted,
+         d.code AS discount_code,
+         (SELECT COUNT(*) FROM tickets t WHERE t.booking_id = b.id) AS ticket_count
+  FROM bookings b
+  JOIN events e ON b.event_id = e.id
+  JOIN customers c ON b.customer_id = c.id
+  LEFT JOIN discount_codes d ON b.discount_code_id = d.id`;
 
-  const where = [];
-  const params = [];
+const IDS_PER_QUERY = 90; // D1 allows at most 100 bound parameters per statement
 
-  if (options.eventId) {
-    where.push('b.event_id = ?');
-    params.push(options.eventId);
-  }
-  if (options.customerId) {
-    where.push('b.customer_id = ?');
-    params.push(options.customerId);
-  }
-  if (options.status) {
-    where.push('b.status = ?');
-    params.push(options.status);
-  }
-  if (options.reference) {
-    where.push('b.reference LIKE ?');
-    params.push(`%${options.reference}%`);
-  }
-
-  if (where.length > 0) {
-    sql += ' WHERE ' + where.join(' AND ');
-  }
-
-  sql += ' GROUP BY b.id ORDER BY b.booking_date DESC';
-
-  const rows = await db.prepare(sql).all(...params);
-
-  // Decrypt customer fields in-memory for authorized viewing
-  let bookings = await Promise.all(rows.map(async (row) => ({
+async function toBooking(row) {
+  return {
     id: row.id,
     reference: row.reference,
     event_id: row.event_id,
@@ -213,44 +94,68 @@ export async function listBookings(db, options = {}) {
     payment_method: row.payment_method,
     ticket_count: row.ticket_count,
     created_at: row.created_at,
-  })));
-
-  if (options.search) {
-    const q = options.search.toLowerCase();
-    bookings = bookings.filter(
-      (b) =>
-        b.reference.toLowerCase().includes(q) ||
-        (b.customer_name && b.customer_name.toLowerCase().includes(q)) ||
-        (b.customer_email && b.customer_email.toLowerCase().includes(q)) ||
-        (b.event_name && b.event_name.toLowerCase().includes(q))
-    );
-  }
-
-  const limit = options.limit ? parseInt(options.limit, 10) : 100;
-  const offset = options.offset ? parseInt(options.offset, 10) : 0;
-  return bookings.slice(offset, offset + limit);
+  };
 }
 
-export async function updateBookingStatus(db, id, newStatus) {
-  const validStatuses = ['confirmed', 'pending', 'cancelled', 'refunded'];
-  if (!validStatuses.includes(newStatus)) {
-    throw new Error(`Invalid status: ${newStatus}`);
+export async function listBookings(db, options = {}) {
+  const where = [];
+  const params = [];
+
+  if (options.eventId) {
+    where.push('b.event_id = ?');
+    params.push(options.eventId);
+  }
+  if (options.tsEventId) {
+    where.push('b.event_id IN (SELECT id FROM ts_dates WHERE event_id = ?)');
+    params.push(options.tsEventId);
+  }
+  if (options.customerId) {
+    where.push('b.customer_id = ?');
+    params.push(options.customerId);
+  }
+  if (options.status) {
+    where.push('b.status = ?');
+    params.push(options.status);
+  }
+  if (options.reference) {
+    where.push('b.reference LIKE ?');
+    params.push(`%${options.reference}%`);
   }
 
-  const now = new Date().toISOString();
-  const stmt = db.prepare(`
-    UPDATE bookings
-    SET status = ?, updated_at = ?
-    WHERE id = ?
-  `);
-  await stmt.run(newStatus, now, id);
+  const requested = options.limit ? parseInt(options.limit, 10) || 100 : 100;
+  const limit = options.noCap ? requested : Math.min(500, requested);
+  const offset = options.offset ? parseInt(options.offset, 10) || 0 : 0;
+  const run = (extraWhere, extraParams, max, skip) =>
+    db
+      .prepare(`${LIST_SELECT} ${[...where, ...extraWhere].length ? `WHERE ${[...where, ...extraWhere].join(' AND ')}` : ''} ORDER BY b.booking_date DESC, b.id LIMIT ? OFFSET ?`)
+      .all(...params, ...extraParams, max, skip);
 
-  return getBookingById(db, id);
+  // Search: a booking reference (SQL) or a customer's name / e-mail (customer search index). Customer ids go to the
+  // database in small groups, the results are merged, and only the requested page is decrypted.
+  let rows;
+  let tooShort = false;
+  if (options.search && options.search.trim()) {
+    const term = options.search.trim();
+    const customerIds = await matchingCustomerIds(db, term);
+    tooShort = customerIds === null;
+    const found = new Map();
+    const wanted = offset + limit;
+    for (const r of await run(['b.reference LIKE ?'], [`%${term}%`], wanted, 0)) found.set(r.id, r);
+    for (let i = 0; customerIds && i < customerIds.length; i += IDS_PER_QUERY) {
+      const part = customerIds.slice(i, i + IDS_PER_QUERY);
+      for (const r of await run([`b.customer_id IN (${part.map(() => '?').join(',')})`], part, wanted, 0)) found.set(r.id, r);
+    }
+    rows = [...found.values()]
+      .sort((a, b) => String(b.booking_date).localeCompare(String(a.booking_date)) || String(a.id).localeCompare(String(b.id)))
+      .slice(offset, offset + limit);
+  } else {
+    rows = await run([], [], limit, offset); // paging in SQL: only one page of customers is ever decrypted
+  }
+
+  return Object.assign(await Promise.all(rows.map(toBooking)), { tooShort });
 }
 
 export default {
-  createBooking,
   getBookingById,
   listBookings,
-  updateBookingStatus,
 };

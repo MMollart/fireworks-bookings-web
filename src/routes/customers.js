@@ -8,7 +8,7 @@ export function customerRoutes() {
   r.get('/', async (c) => {
     const { search, limit, offset } = c.req.query();
     const customers = await listCustomers(c.get('db'), { search, limit, offset });
-    return c.json({ customers, count: customers.length });
+    return c.json({ customers, count: customers.length, tooShort: Boolean(customers.tooShort) });
   });
 
   r.get('/:id', async (c) => {

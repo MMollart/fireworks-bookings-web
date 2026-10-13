@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   getDashboardSummary,
+  listEventTotals,
   getDailySalesVelocity,
   getDiscountCodeReport,
   getTicketTypeBreakdown,
@@ -12,16 +13,22 @@ export function reportRoutes() {
   const r = new Hono();
 
   r.get('/dashboard', async (c) => {
-    const summary = await getDashboardSummary(c.get('db'));
+    const summary = await getDashboardSummary(c.get('db'), { eventId: c.req.query('eventId') });
     return c.json({ ...summary, summary });
   });
+
+  // Events (newest first) for the event selectors on the dashboard and Reports.
+  r.get('/events', async (c) => c.json({ events: await listEventTotals(c.get('db')) }));
 
   r.get('/velocity', async (c) => {
     const { eventId, days } = c.req.query();
     return c.json({ velocity: await getDailySalesVelocity(c.get('db'), { eventId, days }) });
   });
 
-  r.get('/discounts', async (c) => c.json({ discounts: await getDiscountCodeReport(c.get('db')) }));
+  r.get('/discounts', async (c) => {
+    const eventId = c.req.query('eventId');
+    return c.json(await getDiscountCodeReport(c.get('db'), { eventId: eventId && eventId !== 'all' ? eventId : undefined }));
+  });
 
   r.get('/tickets', async (c) => c.json({ breakdown: await getTicketTypeBreakdown(c.get('db'), c.req.query('eventId')) }));
 

@@ -6,8 +6,6 @@ import { createFakeTicketSource } from './helpers/fakeTicketSource.js';
 import { initConfig } from '../src/config.js';
 import { resetBootstrapState } from '../src/db/index.js';
 import { hashPassword } from '../src/auth/passwords.js';
-import { createEvent } from '../src/domain/events.js';
-import { createBooking } from '../src/domain/bookings.js';
 
 const ENV = { NODE_ENV: 'test' };
 
@@ -106,9 +104,11 @@ describe('HTTP API & Authentication Integration Tests', () => {
 
   test('Viewer accounts are read-only', async () => {
     assert.equal((await call('GET', '/api/events', { cookie: viewerCookie })).status, 200);
-    const create = await call('POST', '/api/events', { cookie: viewerCookie, json: { name: 'X', event_date: '2026-11-05' } });
-    assert.equal(create.status, 403);
-    assert.equal((await call('POST', '/api/tickets/checkin', { cookie: viewerCookie, json: { barcode: 'x' } })).status, 403);
+    assert.equal((await call('POST', '/api/ticketsource/events/refresh', { cookie: viewerCookie, json: {} })).status, 403);
+    // Events, bookings and tickets come from TicketSource only: there are no endpoints to create or change them.
+    for (const [method, path] of [['POST', '/api/events'], ['PUT', '/api/events/x'], ['DELETE', '/api/events/x'], ['POST', '/api/bookings'], ['POST', '/api/tickets/checkin']]) {
+      assert.equal((await call(method, path, { cookie: adminCookie, json: {} })).status, 404, `${method} ${path}`);
+    }
   });
 
   test('Admin user management endpoints work for admin and are blocked for operator', async () => {
@@ -135,28 +135,10 @@ describe('HTTP API & Authentication Integration Tests', () => {
     assert.equal(resetRes.body.success, true);
   });
 
-  test('Gate check-in API endpoint validates barcodes', async () => {
-    const ev = await createEvent(db, { name: 'Test Gate Event', event_date: '2026-11-05 18:00:00', capacity: 100 });
-    const booking = await createBooking(db, {
-      event_id: ev.id,
-      customer: { name: 'Gate Attendee', email: 'attendee@example.com' },
-      tickets: [{ ticket_type: 'Standard', price: 10.0 }],
-    });
-    const barcode = booking.tickets[0].barcode;
-
-    const first = await call('POST', '/api/tickets/checkin', { cookie: operatorCookie, json: { barcode } });
-    assert.equal(first.status, 200);
-    assert.equal(first.body.success, true);
-
-    const second = await call('POST', '/api/tickets/checkin', { cookie: operatorCookie, json: { barcode } });
-    assert.equal(second.status, 409);
-    assert.equal(second.body.ticket.already_checked_in, true);
-  });
-
   test('Reports and CSV export endpoints', async () => {
     const rep = await call('GET', '/api/reports/dashboard', { cookie: operatorCookie });
     assert.equal(rep.status, 200);
-    assert.ok(rep.body.financials);
+    assert.equal(rep.body.selectedEventId, null); // nothing downloaded yet
 
     const csv = await call('GET', '/api/reports/export.csv', { cookie: operatorCookie });
     assert.equal(csv.status, 200);

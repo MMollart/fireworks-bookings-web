@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { config } from '../config.js';
 import { requireOperator, requireAdmin } from '../auth/middleware.js';
-import { TicketSourceClient, StepLimit, rateStatus } from '../ticketsource/client.js';
+import { TicketSourceClient, StepLimit, rateStatus, getState } from '../ticketsource/client.js';
 import { refreshEvents, listEventSummaries } from '../ticketsource/events.js';
 import { syncEventStep } from '../ticketsource/engine.js';
 
@@ -31,6 +31,11 @@ export function ticketSourceRoutes() {
       configured: Boolean(config.ticketSource.apiKey),
       rate: await rateStatus(db, config.ticketSource.callsPerMinute),
       settlementDays: config.ticketSource.settlementDays,
+      autoRefresh: {
+        everyMinutes: 30,
+        lastRunAt: await getState(db, 'auto_refresh_at'),
+        lastResult: JSON.parse((await getState(db, 'auto_refresh_result')) || 'null'),
+      },
     });
   });
 

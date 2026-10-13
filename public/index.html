@@ -37,12 +37,12 @@
       <a class="nav-tab active" data-tab="overview">Overview</a>
       <a class="nav-tab" data-tab="events">Events</a>
       <a class="nav-tab" data-tab="bookings">Bookings</a>
-      <a class="nav-tab" data-tab="tickets">Tickets & Check-In</a>
       <a class="nav-tab" data-tab="customers">Customers</a>
       <a class="nav-tab" data-tab="reports">Reports</a>
       <a class="nav-tab" data-tab="analysis">Analysis</a>
       <a class="nav-tab" data-tab="discounts">Discount Codes</a>
       <a class="nav-tab" data-tab="sync">TicketSource</a>
+      <a class="nav-tab" data-tab="config" id="configTab" style="display: none;">Configuration</a>
       <a class="nav-tab" data-tab="admin" id="adminTab" style="display: none;">Admin</a>
     </div>
   </nav>
@@ -55,9 +55,10 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">Dashboard Overview</h2>
-          <p class="section-desc">Key performance indicators, sales metrics, and capacity utilization</p>
+          <p class="section-desc">Sales for one event, from the bookings downloaded from TicketSource. Shows the latest event unless you choose another.</p>
         </div>
         <div class="header-actions">
+          <select id="dashboardEvent" class="filter-select" aria-label="Event"></select>
           <button class="btn btn-secondary btn-sm" id="refreshDashboardBtn">Refresh</button>
         </div>
       </div>
@@ -76,18 +77,18 @@
         <div class="kpi-card accent-amber">
           <div class="kpi-label">Tickets Sold</div>
           <div class="kpi-value" id="kpiTickets">0</div>
-          <div class="kpi-sub" id="kpiCheckInRate">Check-in: 0%</div>
+          <div class="kpi-sub" id="kpiTicketBreakdown">&nbsp;</div>
         </div>
         <div class="kpi-card accent-purple">
-          <div class="kpi-label">Total Customers</div>
+          <div class="kpi-label">Customers</div>
           <div class="kpi-value" id="kpiCustomers">0</div>
-          <div class="kpi-sub">Encrypted at rest</div>
+          <div class="kpi-sub">Booked this event</div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Events Summary</h3>
+          <h3 class="card-title">All events</h3>
         </div>
         <div class="card-body">
           <div class="table-responsive">
@@ -95,17 +96,14 @@
               <thead>
                 <tr>
                   <th>Event</th>
-                  <th>Date & Time</th>
-                  <th>Venue</th>
-                  <th>Capacity</th>
-                  <th>Tickets Sold</th>
-                  <th>Occupancy</th>
+                  <th>Date</th>
+                  <th>Bookings</th>
+                  <th>Tickets</th>
                   <th>Revenue</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Loading events...</td></tr>
+                <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading events...</td></tr>
               </tbody>
             </table>
           </div>
@@ -126,7 +124,7 @@
                   <th>Customer</th>
                   <th>Tickets</th>
                   <th>Total</th>
-                  <th>Date</th>
+                  <th>Booked</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -144,11 +142,10 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">Events</h2>
-          <p class="section-desc">Manage fireworks display nights, dates, venues, and ticket capacities</p>
+          <p class="section-desc">Events and performance dates from TicketSource. Read-only: nothing is created or changed here.</p>
         </div>
         <div class="header-actions">
           <button class="btn btn-secondary" id="retrieveEventsBtn" title="Read-only: downloads the list of events from TicketSource, including settled and archived ones">Retrieve events from TicketSource</button>
-          <button class="btn btn-primary" id="openNewEventModalBtn" title="Creates a record in this app only. Nothing is sent to TicketSource.">+ New Event</button>
         </div>
       </div>
 
@@ -184,32 +181,6 @@
         </div>
       </div>
 
-      <h3 class="card-title" style="margin-bottom: 12px;">Local events</h3>
-
-      <div class="card">
-        <div class="card-body">
-          <div class="table-responsive">
-            <table class="data-table" id="eventsTable">
-              <thead>
-                <tr>
-                  <th>Event Name</th>
-                  <th>Date</th>
-                  <th>Venue</th>
-                  <th>Gates / Display</th>
-                  <th>Capacity</th>
-                  <th>Sold</th>
-                  <th>Revenue</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="9" style="text-align: center;">Loading events...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
     </section>
 
     <!-- SECTION 3: BOOKINGS -->
@@ -217,17 +188,14 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">Bookings</h2>
-          <p class="section-desc">All customer ticket orders, payment statuses, and allocations</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-primary" id="openNewBookingModalBtn" title="Creates a record in this app only. Nothing is sent to TicketSource.">+ New Booking</button>
+          <p class="section-desc">Customer orders downloaded from TicketSource</p>
         </div>
       </div>
 
       <div class="card">
         <div class="card-body">
           <div class="filter-bar">
-            <input type="text" id="bookingSearchInput" class="search-input" placeholder="Search reference, customer, or email...">
+            <input type="text" id="bookingSearchInput" class="search-input" placeholder="Search booking reference, customer name or email address...">
             <select id="bookingStatusFilter" class="filter-select">
               <option value="">All Statuses</option>
               <option value="confirmed">Confirmed</option>
@@ -240,6 +208,7 @@
             </select>
           </div>
 
+          <p class="section-desc" id="bookingSearchHint" hidden>Type at least 3 letters of a name or email address, or part of a booking reference.</p>
           <div class="table-responsive">
             <table class="data-table" id="bookingsTable">
               <thead>
@@ -265,86 +234,22 @@
       </div>
     </section>
 
-    <!-- SECTION 4: TICKETS & CHECK-IN -->
-    <section id="section-tickets" class="page-section">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">Tickets & Check-In</h2>
-          <p class="section-desc">Gate check-in scanner and individual ticket records</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">Gate Ticket Scanner / Check-In</h3>
-        </div>
-        <div class="card-body">
-          <form id="checkInForm" style="display: flex; gap: 0.75rem; max-width: 600px;">
-            <input 
-              type="text" 
-              id="barcodeInput" 
-              class="form-control" 
-              placeholder="Scan or enter barcode / ticket ID (e.g. FB-12345678)" 
-              required
-              autofocus
-            >
-            <button type="submit" class="btn btn-primary" style="white-space: nowrap;">Check In</button>
-          </form>
-          <div id="checkInResult" style="margin-top: 1rem; display: none;"></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title">All Issued Tickets</h3>
-        </div>
-        <div class="card-body">
-          <div class="filter-bar">
-            <input type="text" id="ticketSearchInput" class="search-input" placeholder="Search barcode or booking ref...">
-            <select id="ticketCheckedInFilter" class="filter-select">
-              <option value="">All Check-In Statuses</option>
-              <option value="false">Not Checked In</option>
-              <option value="true">Checked In</option>
-            </select>
-          </div>
-
-          <div class="table-responsive">
-            <table class="data-table" id="ticketsTable">
-              <thead>
-                <tr>
-                  <th>Barcode</th>
-                  <th>Booking Ref</th>
-                  <th>Event</th>
-                  <th>Ticket Type</th>
-                  <th>Price</th>
-                  <th>Status</th>
-                  <th>Checked In At</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="7" style="text-align: center;">Loading tickets...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- SECTION 5: CUSTOMERS -->
     <section id="section-customers" class="page-section">
       <div class="section-header">
         <div>
           <h2 class="section-title">Customers</h2>
-          <p class="section-desc">Customer records with encrypted personal data at rest</p>
+          <p class="section-desc">Customer records with personal data encrypted at rest. Search by name or email address (at least 3 letters).</p>
         </div>
       </div>
 
       <div class="card">
         <div class="card-body">
           <div class="filter-bar">
-            <input type="text" id="customerSearchInput" class="search-input" placeholder="Search customer name, email, or postcode...">
+            <input type="text" id="customerSearchInput" class="search-input" placeholder="Search by name or email address...">
           </div>
 
+          <p class="section-desc" id="customerSearchHint" hidden>Type at least 3 letters of a name or email address.</p>
           <div class="table-responsive">
             <table class="data-table" id="customersTable">
               <thead>
@@ -372,10 +277,11 @@
       <div class="section-header">
         <div>
           <h2 class="section-title">Reports</h2>
-          <p class="section-desc">Sales velocity, ticket breakdown, discount-code performance, and CSV export</p>
+          <p class="section-desc">Ticket categories and discount-code performance for one event or all events, and CSV export</p>
         </div>
         <div class="header-actions">
-          <a href="/api/reports/export.csv" class="btn btn-secondary" download>
+          <select id="reportsEvent" class="filter-select" aria-label="Event"></select>
+          <a href="/api/reports/export.csv" id="exportBookingsLink" class="btn btn-secondary" download>
             Export Bookings CSV
           </a>
         </div>
@@ -384,16 +290,17 @@
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Ticket Tier Distribution</h3>
+          <p class="section-desc">Uses the ticket type dictionary set in Configuration. Revenue is the booking total shared equally across its tickets.</p>
         </div>
         <div class="card-body">
           <div class="table-responsive">
             <table class="data-table" id="ticketTypeBreakdownTable">
               <thead>
                 <tr>
-                  <th>Ticket Type</th>
-                  <th>Tickets Sold</th>
-                  <th>Total Revenue</th>
-                  <th>Checked In Count</th>
+                  <th>Category</th>
+                  <th>Tickets</th>
+                  <th>Revenue</th>
+                  <th>Ticket types included</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,18 +320,15 @@
             <table class="data-table" id="discountsTable">
               <thead>
                 <tr>
+                  <th>Event year</th>
                   <th>Code</th>
-                  <th>Description</th>
-                  <th>Type</th>
-                  <th>Value</th>
-                  <th>Usage Count</th>
-                  <th>Total Savings Given</th>
-                  <th>Associated Revenue</th>
-                  <th>Status</th>
+                  <th>Uses</th>
+                  <th>Total discount</th>
+                  <th>Notes</th>
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="8" style="text-align: center;">Loading discount report...</td></tr>
+                <tr><td colspan="5" style="text-align: center;">Loading discount report...</td></tr>
               </tbody>
             </table>
           </div>
@@ -458,7 +362,7 @@
             <label class="form-label" for="salesGroup">Group by</label>
             <select id="salesGroup" class="filter-select">
               <option value="whole">Whole event</option>
-              <option value="daily">Daily</option>
+              <option value="daily" selected>Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
             </select>
@@ -601,6 +505,7 @@
           <h3 class="card-title">Events</h3>
         </div>
         <div class="card-body">
+          <p class="section-desc" id="tsAutoRefresh" style="margin-bottom: 0.5rem;"></p>
           <p class="section-desc" id="tsStateHelp" style="margin-bottom: 0.75rem;"></p>
           <div class="table-responsive">
             <table class="data-table" id="tsEventsTable">
@@ -619,6 +524,57 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONFIGURATION: ticket type dictionary -->
+    <section id="section-config" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Configuration</h2>
+          <p class="section-desc">Group the different TicketSource ticket types into reporting categories, e.g. "Adult Ticket" and "Early Bird Adult Ticket" are both Adult. Reports use these categories.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Ticket type dictionary</h3>
+        </div>
+        <div class="card-body">
+          <p class="section-desc" id="ticketTypeSummary"></p>
+          <form id="ticketTypeForm" class="filter-bar">
+            <input type="text" id="ttType" class="search-input" placeholder="Ticket type, exactly as in TicketSource" required maxlength="200" list="ttTypeList">
+            <input type="text" id="ttCategory" class="search-input" placeholder="Category, e.g. Adult" required maxlength="80" list="ttCategoryList">
+            <datalist id="ttTypeList"></datalist>
+            <datalist id="ttCategoryList"></datalist>
+            <button type="submit" class="btn btn-primary">Add / update</button>
+          </form>
+          <div class="table-responsive">
+            <table class="data-table" id="ticketTypesTable">
+              <thead>
+                <tr>
+                  <th>Ticket type</th>
+                  <th>Tickets</th>
+                  <th>Category</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="4" style="text-align: center;">Loading ticket types...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Customer search index</h3>
+        </div>
+        <div class="card-body">
+          <p class="section-desc" id="reindexStatus">New customers are indexed as they are downloaded. Run this once after a bulk import so that all customers can be found by name or email address.</p>
+          <button class="btn btn-secondary" id="reindexBtn">Build customer search index</button>
         </div>
       </div>
     </section>
@@ -661,104 +617,6 @@
   </main>
 
   <!-- MODALS -->
-
-  <!-- New Event Modal -->
-  <div id="newEventModal" class="modal-overlay">
-    <div class="modal-container">
-      <div class="modal-header">
-        <h3 class="modal-title">Create New Event</h3>
-        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
-      </div>
-      <form id="newEventForm">
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label" for="eventNameInput">Event Name</label>
-            <input type="text" id="eventNameInput" class="form-control" placeholder="e.g. Fireworks Spectacular 2026" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="eventDateInput">Event Date & Time</label>
-            <input type="datetime-local" id="eventDateInput" class="form-control" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="eventVenueInput">Venue</label>
-            <input type="text" id="eventVenueInput" class="form-control" placeholder="e.g. Scout Campsite Field" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="eventCapacityInput">Capacity</label>
-            <input type="number" id="eventCapacityInput" class="form-control" placeholder="1000" min="1" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="eventGatesInput">Gates Open</label>
-            <input type="text" id="eventGatesInput" class="form-control" placeholder="e.g. 17:30">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="eventDisplayInput">Display Time</label>
-            <input type="text" id="eventDisplayInput" class="form-control" placeholder="e.g. 19:15">
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Event</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- New Booking Modal -->
-  <div id="newBookingModal" class="modal-overlay">
-    <div class="modal-container">
-      <div class="modal-header">
-        <h3 class="modal-title">Create Booking</h3>
-        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
-      </div>
-      <form id="newBookingForm">
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label" for="bookingEventSelect">Event</label>
-            <select id="bookingEventSelect" class="form-control" required></select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="custNameInput">Customer Name</label>
-            <input type="text" id="custNameInput" class="form-control" placeholder="Jane Doe" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="custEmailInput">Customer Email</label>
-            <input type="email" id="custEmailInput" class="form-control" placeholder="jane@example.com" required>
-            <div class="form-help">Personal details are encrypted at rest using AES-256-GCM.</div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="custPhoneInput">Phone</label>
-            <input type="tel" id="custPhoneInput" class="form-control" placeholder="07700 900000">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="custPostcodeInput">Postcode</label>
-            <input type="text" id="custPostcodeInput" class="form-control" placeholder="OX1 1AA">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ticketTypeSelect">Ticket Type</label>
-            <select id="ticketTypeSelect" class="form-control">
-              <option value="Adult" data-price="12">Adult (£12.00)</option>
-              <option value="Child" data-price="7">Child (£7.00)</option>
-              <option value="Family" data-price="32">Family (£32.00)</option>
-              <option value="VIP" data-price="25">VIP Viewing (£25.00)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ticketQtyInput">Quantity</label>
-            <input type="number" id="ticketQtyInput" class="form-control" value="1" min="1" max="50" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="bookingDiscountInput">Discount Code (Optional)</label>
-            <input type="text" id="bookingDiscountInput" class="form-control" placeholder="e.g. EARLYBIRD">
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Booking</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <!-- Add User Modal -->
   <div id="newUserModal" class="modal-overlay">

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { config } from '../config.js';
-import { loadScopeOptions, loadBookings, isComplete } from '../analysis/data.js';
+import { loadScopeOptions, loadBookings, isComplete, loadEventName } from '../analysis/data.js';
 import { salesOverTime, GROUPS } from '../analysis/sales.js';
 import { compareEvents, COMPARE_GROUPS } from '../analysis/compare.js';
 import { loadCodeLines, summariseDiscounts } from '../analysis/discounts.js';
@@ -8,7 +8,7 @@ import { eventState } from '../ticketsource/events.js';
 
 async function requireEvent(db, id) {
   if (!id) return null;
-  return (await db.prepare('SELECT id, name FROM ts_events WHERE id = ?').get(id)) || null;
+  return loadEventName(db, id);
 }
 
 async function checkPerformance(db, eventId, performanceId) {
