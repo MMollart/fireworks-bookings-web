@@ -1,0 +1,36 @@
+{
+  "name": "fireworks-bookings-web",
+  "version": "1.0.0",
+  "description": "Fireworks Bookings rebuilt as a Scout Budget-style web app with admin-managed sign-in and encrypted data at rest.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/**/*.test.js",
+    "create-admin": "node scripts/create-admin.js",
+    "seed": "node scripts/seed.js",
+    "migrate": "node scripts/migrate.js"
+  },
+  "keywords": [
+    "fireworks",
+    "bookings",
+    "scout-budget",
+    "tickets",
+    "events",
+    "ticketsource"
+  ],
+  "author": "MMollart",
+  "license": "ISC",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.3.1"
+  }
+}

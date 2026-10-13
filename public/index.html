@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fireworks Bookings - Management Portal</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎆</text></svg>">
+</head>
+<body>
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-wrapper">
+        <div class="brand-badge">🎆</div>
+        <div>
+          <div class="brand-title">Fireworks Bookings</div>
+          <div class="brand-subtitle">Scout Group Event Operations</div>
+        </div>
+      </div>
+      <div class="user-nav">
+        <div class="user-badge">
+          <span id="navUsername">Loading...</span>
+          <span id="navRole" class="role-pill">viewer</span>
+        </div>
+        <button id="logoutBtn" class="btn btn-secondary btn-sm" title="Sign Out">
+          Sign Out
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Secondary Tab Navigation -->
+  <nav class="app-nav">
+    <div class="nav-inner">
+      <a class="nav-tab active" data-tab="overview">📊 Overview</a>
+      <a class="nav-tab" data-tab="events">🎆 Events</a>
+      <a class="nav-tab" data-tab="bookings">🎟️ Bookings</a>
+      <a class="nav-tab" data-tab="tickets">🏷️ Tickets & Check-In</a>
+      <a class="nav-tab" data-tab="customers">👥 Customers</a>
+      <a class="nav-tab" data-tab="reports">📈 Reports & Analysis</a>
+      <a class="nav-tab" data-tab="sync">🔄 TicketSource Sync</a>
+      <a class="nav-tab" data-tab="admin" id="adminTab" style="display: none;">⚙️ Admin</a>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    
+    <!-- SECTION 1: OVERVIEW / DASHBOARD -->
+    <section id="section-overview" class="page-section active">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Dashboard Overview</h2>
+          <p class="section-desc">Key performance indicators, sales metrics, and capacity utilization</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary btn-sm" id="refreshDashboardBtn">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card accent-blue">
+          <div class="kpi-label">Gross Revenue</div>
+          <div class="kpi-value" id="kpiRevenue">£0.00</div>
+          <div class="kpi-sub" id="kpiDiscounts">Discounts: £0.00</div>
+        </div>
+        <div class="kpi-card accent-green">
+          <div class="kpi-label">Confirmed Bookings</div>
+          <div class="kpi-value" id="kpiBookings">0</div>
+          <div class="kpi-sub" id="kpiAov">Average Order: £0.00</div>
+        </div>
+        <div class="kpi-card accent-amber">
+          <div class="kpi-label">Tickets Sold</div>
+          <div class="kpi-value" id="kpiTickets">0</div>
+          <div class="kpi-sub" id="kpiCheckInRate">Check-in: 0%</div>
+        </div>
+        <div class="kpi-card accent-purple">
+          <div class="kpi-label">Total Customers</div>
+          <div class="kpi-value" id="kpiCustomers">0</div>
+          <div class="kpi-sub">Encrypted at rest</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Events Summary</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="overviewEventsTable">
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Date & Time</th>
+                  <th>Venue</th>
+                  <th>Capacity</th>
+                  <th>Tickets Sold</th>
+                  <th>Occupancy</th>
+                  <th>Revenue</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Loading events...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Recent Bookings</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="overviewRecentBookingsTable">
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Event</th>
+                  <th>Customer</th>
+                  <th>Tickets</th>
+                  <th>Total</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Loading bookings...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: EVENTS -->
+    <section id="section-events" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Events</h2>
+          <p class="section-desc">Manage fireworks display nights, dates, venues, and ticket capacities</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="openNewEventModalBtn">+ New Event</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="eventsTable">
+              <thead>
+                <tr>
+                  <th>Event Name</th>
+                  <th>Date</th>
+                  <th>Venue</th>
+                  <th>Gates / Display</th>
+                  <th>Capacity</th>
+                  <th>Sold</th>
+                  <th>Revenue</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="9" style="text-align: center;">Loading events...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: BOOKINGS -->
+    <section id="section-bookings" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Bookings</h2>
+          <p class="section-desc">All customer ticket orders, payment statuses, and allocations</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="openNewBookingModalBtn">+ New Booking</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="filter-bar">
+            <input type="text" id="bookingSearchInput" class="search-input" placeholder="Search reference, customer, or email...">
+            <select id="bookingStatusFilter" class="filter-select">
+              <option value="">All Statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="refunded">Refunded</option>
+            </select>
+            <select id="bookingEventFilter" class="filter-select">
+              <option value="">All Events</option>
+            </select>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="bookingsTable">
+              <thead>
+                <tr>
+                  <th>Reference</th>
+                  <th>Event</th>
+                  <th>Customer</th>
+                  <th>Tickets</th>
+                  <th>Subtotal</th>
+                  <th>Discount</th>
+                  <th>Total</th>
+                  <th>Payment</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="10" style="text-align: center;">Loading bookings...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 4: TICKETS & CHECK-IN -->
+    <section id="section-tickets" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Tickets & Check-In</h2>
+          <p class="section-desc">Gate check-in scanner and individual ticket records</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Gate Ticket Scanner / Check-In</h3>
+        </div>
+        <div class="card-body">
+          <form id="checkInForm" style="display: flex; gap: 0.75rem; max-width: 600px;">
+            <input 
+              type="text" 
+              id="barcodeInput" 
+              class="form-control" 
+              placeholder="Scan or enter barcode / ticket ID (e.g. FB-12345678)" 
+              required
+              autofocus
+            >
+            <button type="submit" class="btn btn-primary" style="white-space: nowrap;">Check In</button>
+          </form>
+          <div id="checkInResult" style="margin-top: 1rem; display: none;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">All Issued Tickets</h3>
+        </div>
+        <div class="card-body">
+          <div class="filter-bar">
+            <input type="text" id="ticketSearchInput" class="search-input" placeholder="Search barcode or booking ref...">
+            <select id="ticketCheckedInFilter" class="filter-select">
+              <option value="">All Check-In Statuses</option>
+              <option value="false">Not Checked In</option>
+              <option value="true">Checked In</option>
+            </select>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="ticketsTable">
+              <thead>
+                <tr>
+                  <th>Barcode</th>
+                  <th>Booking Ref</th>
+                  <th>Event</th>
+                  <th>Ticket Type</th>
+                  <th>Price</th>
+                  <th>Status</th>
+                  <th>Checked In At</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="7" style="text-align: center;">Loading tickets...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: CUSTOMERS -->
+    <section id="section-customers" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Customers</h2>
+          <p class="section-desc">Customer records with encrypted personal data at rest</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="filter-bar">
+            <input type="text" id="customerSearchInput" class="search-input" placeholder="Search customer name, email, or postcode...">
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="customersTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Phone</th>
+                  <th>Postcode</th>
+                  <th>Total Bookings</th>
+                  <th>Total Spent</th>
+                  <th>First Added</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="7" style="text-align: center;">Loading customers...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 6: REPORTS & ANALYSIS -->
+    <section id="section-reports" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Reports & Analysis</h2>
+          <p class="section-desc">Sales velocity, ticket breakdown, discount-code performance, and CSV export</p>
+        </div>
+        <div class="header-actions">
+          <a href="/api/reports/export.csv" class="btn btn-secondary" download>
+            📥 Export Bookings CSV
+          </a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Ticket Tier Distribution</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="ticketTypeBreakdownTable">
+              <thead>
+                <tr>
+                  <th>Ticket Type</th>
+                  <th>Tickets Sold</th>
+                  <th>Total Revenue</th>
+                  <th>Checked In Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="4" style="text-align: center;">Loading breakdown...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Discount Code Performance</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="discountsTable">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Description</th>
+                  <th>Type</th>
+                  <th>Value</th>
+                  <th>Usage Count</th>
+                  <th>Total Savings Given</th>
+                  <th>Associated Revenue</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="8" style="text-align: center;">Loading discount report...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 7: TICKETSOURCE SYNC -->
+    <section id="section-sync" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">TicketSource Sync</h2>
+          <p class="section-desc">Automated and resumable ingestion flow for event orders</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="triggerSyncBtn">⚡ Run Sync Now</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card accent-blue">
+          <div class="kpi-label">Sync Mode</div>
+          <div class="kpi-value" id="syncModeLabel" style="font-size: 1.25rem;">Checking...</div>
+          <div class="kpi-sub" id="syncModeSub">API Connection</div>
+        </div>
+        <div class="kpi-card accent-green">
+          <div class="kpi-label">Latest Checkpoint Status</div>
+          <div class="kpi-value" id="syncStatusLabel" style="font-size: 1.25rem;">Idle</div>
+          <div class="kpi-sub" id="syncCursorLabel">Cursor: None</div>
+        </div>
+        <div class="kpi-card accent-purple">
+          <div class="kpi-label">Last Records Imported</div>
+          <div class="kpi-value" id="syncImportedCount">0</div>
+          <div class="kpi-sub" id="syncCompletedAt">Never</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Recent Ingestion Logs</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="syncLogsTable">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Action</th>
+                  <th>Reference</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="4" style="text-align: center;">Loading logs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 8: ADMIN (USERS) -->
+    <section id="section-admin" class="page-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">User Account Management</h2>
+          <p class="section-desc">Create approved operator accounts, toggle access, and reset passwords</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="openNewUserModalBtn">+ Add User</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="usersTable">
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="6" style="text-align: center;">Loading users...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODALS -->
+
+  <!-- New Event Modal -->
+  <div id="newEventModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Create New Event</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <form id="newEventForm">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="eventNameInput">Event Name</label>
+            <input type="text" id="eventNameInput" class="form-control" placeholder="e.g. Fireworks Spectacular 2026" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="eventDateInput">Event Date & Time</label>
+            <input type="datetime-local" id="eventDateInput" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="eventVenueInput">Venue</label>
+            <input type="text" id="eventVenueInput" class="form-control" placeholder="e.g. Scout Campsite Field" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="eventCapacityInput">Capacity</label>
+            <input type="number" id="eventCapacityInput" class="form-control" placeholder="1000" min="1" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="eventGatesInput">Gates Open</label>
+            <input type="text" id="eventGatesInput" class="form-control" placeholder="e.g. 17:30">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="eventDisplayInput">Display Time</label>
+            <input type="text" id="eventDisplayInput" class="form-control" placeholder="e.g. 19:15">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Event</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- New Booking Modal -->
+  <div id="newBookingModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Create Booking</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <form id="newBookingForm">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="bookingEventSelect">Event</label>
+            <select id="bookingEventSelect" class="form-control" required></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="custNameInput">Customer Name</label>
+            <input type="text" id="custNameInput" class="form-control" placeholder="Jane Doe" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="custEmailInput">Customer Email</label>
+            <input type="email" id="custEmailInput" class="form-control" placeholder="jane@example.com" required>
+            <div class="form-help">Personal details are encrypted at rest using AES-256-GCM.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="custPhoneInput">Phone</label>
+            <input type="tel" id="custPhoneInput" class="form-control" placeholder="07700 900000">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="custPostcodeInput">Postcode</label>
+            <input type="text" id="custPostcodeInput" class="form-control" placeholder="OX1 1AA">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ticketTypeSelect">Ticket Type</label>
+            <select id="ticketTypeSelect" class="form-control">
+              <option value="Adult" data-price="12">Adult (£12.00)</option>
+              <option value="Child" data-price="7">Child (£7.00)</option>
+              <option value="Family" data-price="32">Family (£32.00)</option>
+              <option value="VIP" data-price="25">VIP Viewing (£25.00)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ticketQtyInput">Quantity</label>
+            <input type="number" id="ticketQtyInput" class="form-control" value="1" min="1" max="50" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bookingDiscountInput">Discount Code (Optional)</label>
+            <input type="text" id="bookingDiscountInput" class="form-control" placeholder="e.g. EARLYBIRD">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Booking</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Add User Modal -->
+  <div id="newUserModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Create Approved User</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <form id="newUserForm">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="newUsernameInput">Username</label>
+            <input type="text" id="newUsernameInput" class="form-control" placeholder="e.g. volunteer_john" required minlength="3">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="newUserPasswordInput">Password</label>
+            <input type="password" id="newUserPasswordInput" class="form-control" placeholder="Minimum 8 characters" required minlength="8">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="newUserRoleSelect">Role</label>
+            <select id="newUserRoleSelect" class="form-control">
+              <option value="viewer">Viewer (Read-only)</option>
+              <option value="operator" selected>Operator (Check-in, Bookings)</option>
+              <option value="admin">Administrator (Full control)</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Reset Password Modal -->
+  <div id="resetPasswordModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Reset User Password</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <form id="resetPasswordForm">
+        <input type="hidden" id="resetUserId">
+        <div class="modal-body">
+          <p id="resetUsernameDisplay" style="margin-bottom: 1rem; font-weight: 500;"></p>
+          <div class="form-group">
+            <label class="form-label" for="resetNewPasswordInput">New Password</label>
+            <input type="password" id="resetNewPasswordInput" class="form-control" placeholder="Minimum 8 characters" required minlength="8">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Update Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Booking Details Modal -->
+  <div id="bookingDetailModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 650px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="bookingDetailTitle">Booking Details</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <div class="modal-body" id="bookingDetailContent">
+        Loading...
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary close-modal">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
