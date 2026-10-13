@@ -7,7 +7,7 @@ export class TicketSourceSync {
   constructor(db, options = {}) {
     this.db = db;
     this.apiKey = options.apiKey || '';
-    this.apiUrl = options.apiUrl || 'https://api.ticketsource.co.uk';
+    this.apiUrl = options.apiUrl || 'https://api.ticketsource.io';
   }
 
   async getLatestCheckpoint() {
@@ -162,7 +162,7 @@ export class TicketSourceSync {
       // Fetch batches from TicketSource or simulated provider
       const batch = await this.fetchBatch({
         cursor: resumeCursor,
-        limit: options.batchSize || 50,
+        limit: options.batchSize || 10,
       });
 
       for (const order of batch.records) {
@@ -219,29 +219,7 @@ export class TicketSourceSync {
    * Otherwise, provides realistic simulated Fireworks booking records for testing/demo.
    */
   async fetchBatch({ cursor, limit = 10 }) {
-    if (this.apiKey) {
-      // Live TicketSource API integration
-      // TicketSource REST API: GET /api/v1/orders
-      const url = new URL(`${this.apiUrl}/api/v1/orders`);
-      url.searchParams.set('limit', String(limit));
-      if (cursor) {
-        url.searchParams.set('since', cursor);
-      }
-
-      const response = await fetch(url.toString(), {
-        headers: {
-          'Authorization': 'Bearer ' + this.apiKey,
-          'Accept': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`TicketSource API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      return this.transformTicketSourceApiResponse(data);
-    }
+    if (this.apiKey) return this.fetchLiveBatch({ limit });
 
     // Never fabricate bookings in production.
     if (config.isProd) {
@@ -250,6 +228,181 @@ export class TicketSourceSync {
 
     // Simulated ingestion data (dev/demo only)
     return this.generateSimulatedBatch(cursor, limit);
+  }
+
+  /** GET against the TicketSource API (https://reference.ticketsource.io). Accepts absolute URLs from `links`. */
+  async api(pathOrUrl, params = {}) {
+    const url = new URL(pathOrUrl.startsWith('http') ? pathOrUrl : `${this.apiUrl}${pathOrUrl}`);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' },
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = await res.json();
+        detail = body?.errors?.[0]?.detail || body?.errors?.[0]?.title || '';
+      } catch {
+        // non-JSON error body
+      }
+      throw new Error(`TicketSource API error: ${res.status} ${res.statusText}${detail ? ` - ${detail}` : ''} (${url.pathname})`);
+    }
+    return res.json();
+  }
+
+  /** Follows `links.next` until exhausted (or maxPages), returning every `data` item. */
+  async apiList(path, params = {}, maxPages = 10) {
+    const items = [];
+    let next = path;
+    let query = { per_page: 100, ...params };
+    for (let page = 0; next && page < maxPages; page++) {
+      const body = await this.api(next, query);
+      items.push(...(body.data || []));
+      next = body.links?.next || null;
+      query = {}; // `next` is a complete URL
+    }
+    return items;
+  }
+
+  /**
+   * Live import. TicketSource exposes bookings per performance date
+   * (events -> dates -> bookings), with the customer and seats behind separate
+   * links, so we walk that tree and only fetch details for bookings we have not
+   * imported yet, stopping once `limit` new ones are collected. Run sync again to
+   * continue (hasMore is true while there may be more).
+   */
+  async fetchLiveBatch({ limit }) {
+    const records = [];
+    let hasMore = false;
+    const customers = new Map();
+
+    const events = (await this.apiList('/events')).filter((e) => !e.attributes?.archived);
+
+    outer: for (const ev of events) {
+      const dates = await this.apiList(`/events/${ev.id}/dates`);
+      for (const date of dates) {
+        let next = `/dates/${date.id}/bookings`;
+        let query = { per_page: 50 };
+
+        for (let page = 0; next && page < 20; page++) {
+          const body = await this.api(next, query);
+          next = body.links?.next || null;
+          query = {};
+
+          const bookings = body.data || [];
+          if (bookings.length === 0) continue;
+
+          const refs = bookings.map((b) => b.attributes.ref);
+          const known = await this.db
+            .prepare(`SELECT id, reference, status FROM bookings WHERE reference IN (${refs.map(() => '?').join(',')})`)
+            .all(...refs);
+          const knownByRef = new Map(known.map((k) => [k.reference.toUpperCase(), k]));
+
+          for (const b of bookings) {
+            const status = this.bookingStatus(b);
+            const existing = knownByRef.get(String(b.attributes.ref).toUpperCase());
+
+            if (existing) {
+              if (existing.status !== status) {
+                await updateBookingStatus(this.db, existing.id, status);
+              }
+              continue;
+            }
+
+            if (records.length >= limit) {
+              hasMore = true;
+              break outer;
+            }
+            records.push(await this.transformBooking(b, ev, date, customers));
+          }
+        }
+      }
+    }
+
+    return { records, nextCursor: new Date().toISOString(), hasMore };
+  }
+
+  /** Sums the booking's payment lines (refund lines subtract). */
+  bookingTotals(booking) {
+    let gross = 0;
+    let discount = 0;
+    let refunded = 0;
+    let paid = 0;
+    const notes = [];
+    for (const line of booking.attributes.lines || []) {
+      const amt = line.amount || {};
+      const sign = line.is_refund ? -1 : 1;
+      const lineGross = Number(amt.gross) || 0;
+      if (line.is_refund) refunded += lineGross;
+      else paid += lineGross;
+      if (line.line_type === 'TICKETS') gross += sign * lineGross;
+      const code = amt.discounts?.code;
+      if (code && Number(code.amount) > 0) {
+        discount += Number(code.amount);
+        notes.push(`Discount ${code.description || 'code'}: -${Number(code.amount).toFixed(2)}`);
+      }
+      if (Number(amt.discounts?.automatic) > 0) discount += Number(amt.discounts.automatic);
+    }
+    return { gross: Math.max(0, gross), discount, refunded, paid, notes };
+  }
+
+  bookingStatus(booking) {
+    const { paid, refunded } = this.bookingTotals(booking);
+    return paid > 0 && refunded >= paid ? 'refunded' : 'confirmed';
+  }
+
+  async transformBooking(booking, ev, date, customerCache) {
+    const totals = this.bookingTotals(booking);
+    const attrs = booking.attributes;
+
+    // Customer (separate resource, cached per run)
+    let customer = { name: 'Anonymous Guest', email: `${attrs.ref}@no-email.invalid` };
+    const customerLink = booking.links?.customer;
+    if (customerLink) {
+      if (!customerCache.has(customerLink)) {
+        try {
+          customerCache.set(customerLink, (await this.api(customerLink)).data?.attributes || {});
+        } catch {
+          customerCache.set(customerLink, {});
+        }
+      }
+      const c = customerCache.get(customerLink);
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
+      customer = {
+        name: name || customer.name,
+        email: c.email || customer.email,
+        phone: c.telephone || c.phone || null,
+        postcode: c.address?.postcode || c.address?.postal_code || c.address?.post_code || null,
+      };
+    }
+
+    // Seats carry the price category (ticket type). The API exposes no per-seat price or barcode.
+    const seats = (await this.apiList(`/bookings/${booking.id}/seats`)).filter((x) => !x.attributes?.is_cancelled);
+    const each = seats.length > 0 ? totals.gross / seats.length : 0;
+    const tickets = seats.length > 0
+      ? seats.map((seat, i) => ({
+          ticketType: seat.attributes?.price_category || 'Standard',
+          price: Math.round(each * 100) / 100,
+          barcode: `${attrs.ref}-${i + 1}`,
+        }))
+      : [{ ticketType: 'Standard', price: totals.gross, barcode: `${attrs.ref}-1` }];
+
+    const dateAttrs = date.attributes || {};
+    return {
+      reference: attrs.ref,
+      eventId: date.id,
+      eventName: ev.attributes?.name || 'TicketSource event',
+      eventDate: dateAttrs.start || attrs.created_at,
+      bookingDate: attrs.created_at,
+      status: this.bookingStatus(booking),
+      customer,
+      discountCode: null,
+      paymentMethod: (attrs.lines || [])[0]?.payment_method ? `TicketSource ${attrs.lines[0].payment_method}` : 'TicketSource Online',
+      paymentReference: booking.id,
+      notes: [`TicketSource booking ${booking.id}`, ...totals.notes].join('; '),
+      tickets,
+    };
   }
 
   generateSimulatedBatch(cursor, limit) {
@@ -314,43 +467,6 @@ export class TicketSourceSync {
       records,
       nextCursor,
       hasMore: false,
-    };
-  }
-
-  transformTicketSourceApiResponse(data) {
-    const records = (data.orders || data.data || []).map((order) => {
-      const tickets = (order.tickets || []).map((t) => ({
-        ticketType: t.ticket_type || t.name || 'Standard',
-        price: parseFloat(t.price || 0),
-        barcode: t.barcode || t.ref,
-      }));
-
-      return {
-        reference: order.reference || order.id,
-        eventId: order.event_id || 'evt_default',
-        eventName: order.event_name,
-        eventVenue: order.venue,
-        eventDate: order.event_date,
-        bookingDate: order.created_at || new Date().toISOString(),
-        status: order.status === 'refunded' ? 'refunded' : order.status === 'cancelled' ? 'cancelled' : 'confirmed',
-        customer: {
-          name: order.customer_name || `${order.first_name || ''} ${order.last_name || ''}`.trim(),
-          email: order.customer_email || order.email,
-          phone: order.customer_phone || order.phone,
-          postcode: order.postcode,
-        },
-        discountCode: order.discount_code,
-        discountAmount: parseFloat(order.discount_amount || 0),
-        paymentMethod: order.payment_method || 'TicketSource Online',
-        paymentReference: order.payment_ref,
-        tickets,
-      };
-    });
-
-    return {
-      records,
-      nextCursor: data.next_cursor || data.pagination?.next_cursor,
-      hasMore: Boolean(data.next_cursor || data.pagination?.has_more),
     };
   }
 }

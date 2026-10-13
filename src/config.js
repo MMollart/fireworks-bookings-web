@@ -16,7 +16,7 @@ export const config = {
   sessionSecret: DEV_SESSION_SECRET,
   adminInitialUsername: 'admin',
   adminInitialPassword: '',
-  ticketSource: { apiKey: '', apiUrl: 'https://api.ticketsource.co.uk', webhookSecret: '' },
+  ticketSource: { apiKey: '', apiUrl: 'https://api.ticketsource.io', webhookSecret: '' },
 };
 
 let initialisedFor = null;
@@ -32,7 +32,7 @@ export function initConfig(env = {}) {
   config.adminInitialPassword = env.ADMIN_INITIAL_PASSWORD || '';
   config.ticketSource = {
     apiKey: env.TICKETSOURCE_API_KEY || '',
-    apiUrl: env.TICKETSOURCE_API_URL || 'https://api.ticketsource.co.uk',
+    apiUrl: env.TICKETSOURCE_API_URL || 'https://api.ticketsource.io',
     webhookSecret: env.TICKETSOURCE_WEBHOOK_SECRET || '',
   };
 

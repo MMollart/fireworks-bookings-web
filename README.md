@@ -42,6 +42,6 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
 - **Auth:** PBKDF2-SHA256 password hashes, sessions stored (hashed) in D1, `HttpOnly` cookie. Login is rate limited
   through D1. Roles: `admin`, `operator` (can write), `viewer` (read-only).
 - **TicketSource webhook:** `POST /api/sync/webhook` with header `x-webhook-secret: <TICKETSOURCE_WEBHOOK_SECRET>`.
-  Manual sync needs `TICKETSOURCE_API_KEY`; without it, production refuses to sync (simulated data is dev-only).
+  Manual sync needs `TICKETSOURCE_API_KEY` (from TicketSource Settings > API) and talks to `api.ticketsource.io`: each run imports up to 10 new bookings (events -> dates -> bookings), so click *Run Sync* again while it reports more remain. Each TicketSource date becomes one event here; ticket types come from seat price categories, prices are the booking total split evenly, and barcodes are `<booking ref>-<n>` because the API does not expose TicketSource's own; without it, production refuses to sync (simulated data is dev-only).
 - A daily cron (`wrangler.toml`) prunes expired sessions and rate-limit rows.
 - General API rate limiting is not built in; use a Cloudflare WAF rate-limiting rule if you need it.

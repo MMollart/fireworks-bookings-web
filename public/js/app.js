@@ -820,7 +820,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(data.error || data.message || 'Sync failed', 'error');
         loadSync();
       } else {
-        showToast(`Sync completed! ${data.importedCount || 0} records imported.`, 'success');
+        showToast(`Sync completed! ${data.importedCount || 0} bookings imported.${data.hasMore ? ' More remain - run sync again.' : ''}`, 'success');
         loadSync();
       }
     } catch {

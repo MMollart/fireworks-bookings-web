@@ -1,7 +1,7 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInMemoryDatabase } from './helpers/db.js';
-import { runSync, getSyncStatus, ingestWebhookEvent, generateSimulatedBatch } from '../src/sync/ticketsource.js';
+import { TicketSourceSync, runSync, getSyncStatus, ingestWebhookEvent, generateSimulatedBatch } from '../src/sync/ticketsource.js';
 import { createEvent } from '../src/domain/events.js';
 import { listBookings } from '../src/domain/bookings.js';
 
@@ -96,5 +96,56 @@ describe('Resumable Sync & TicketSource Ingestion', () => {
     // Re-processing same webhook is idempotent
     const duplicateResult = await ingestWebhookEvent(db, webhookPayload);
     assert.equal(duplicateResult.status, 'already_processed');
+  });
+
+  test('live sync walks events -> dates -> bookings and maps TicketSource data', async () => {
+    const calls = [];
+    const responses = {
+      '/events': { data: [{ id: 'evt-1', attributes: { name: 'Fireworks 2026', archived: false } }] },
+      '/events/evt-1/dates': { data: [{ id: 'dat-1', attributes: { start: '2026-11-07T18:00:00+00:00' } }] },
+      '/dates/dat-1/bookings': {
+        data: [
+          {
+            id: 'bkg-1',
+            attributes: {
+              ref: 'A12BCD',
+              created_at: '2026-10-01T10:00:00+00:00',
+              lines: [{ line_type: 'TICKETS', payment_method: 'TS', amount: { gross: 20, discounts: { code: { description: 'EARLY', amount: 2 } } } }],
+            },
+            links: { customer: 'https://api.ticketsource.io/customers/cst-1' },
+          },
+        ],
+        links: { next: null },
+      },
+      '/customers/cst-1': { data: { attributes: { first_name: 'Ann', last_name: 'Lee', email: 'ann@example.com', telephone: '0123', address: { postcode: 'AB1 2CD' } } } },
+      '/bookings/bkg-1/seats': { data: [{ attributes: { price_category: 'Adult' } }, { attributes: { price_category: 'Child' } }], links: { next: null } },
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const u = new URL(url);
+      calls.push(`${u.pathname} ${init.headers.Authorization}`);
+      const body = responses[u.pathname];
+      return body ? new Response(JSON.stringify(body), { status: 200 }) : new Response('{"errors":[{"detail":"nope"}]}', { status: 404 });
+    };
+    try {
+      const sync = new TicketSourceSync(db, { apiKey: 'k', apiUrl: 'https://api.ticketsource.io' });
+      const result = await sync.runSync({});
+      assert.equal(result.success, true, result.error);
+      assert.equal(result.importedCount, 1);
+      assert.ok(calls.every((c) => c.endsWith('Bearer k')));
+
+      const [booking] = await listBookings(db);
+      assert.equal(booking.reference, 'A12BCD');
+      assert.equal(booking.customer_name, 'Ann Lee');
+      assert.equal(booking.ticket_count, 2);
+      assert.equal(booking.total_price, 20);
+
+      // Second run imports nothing new (idempotent)
+      const again = await sync.runSync({});
+      assert.equal(again.importedCount, 0);
+      assert.equal((await listBookings(db)).length, 1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
