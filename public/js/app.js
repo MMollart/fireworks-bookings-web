@@ -222,6 +222,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('kpiTicketBreakdown').textContent =
         (data.tickets?.breakdown || []).slice(0, 4).map(t => `${t.ticket_type} ${t.count}`).join(' · ') || '\u00a0';
       document.getElementById('kpiCustomers').textContent = data.customers?.total || 0;
+      const don = data.donations || { total: 0, bookings: 0, gift_aid_bookings: 0 };
+      document.getElementById('kpiDonations').textContent = formatCurrency(don.total);
+      document.getElementById('kpiDonationsSub').textContent = don.bookings
+        ? `${don.bookings} booking${don.bookings === 1 ? '' : 's'}, ${don.gift_aid_bookings} with Gift Aid`
+        : 'No donations';
 
       renderOverviewEvents(events, dashboardEventId);
       renderOverviewBookings(data.recentBookings || []);
@@ -321,7 +326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       const tbody = document.querySelector('#bookingsTable tbody');
       if (!allBookings.length) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted);">No bookings matching criteria.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted);">No bookings matching criteria.</td></tr>';
         return;
       }
 
@@ -333,6 +338,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <td>${b.ticket_count || 0}</td>
           <td>${formatCurrency(b.subtotal)}</td>
           <td>${b.discount_amount > 0 ? `-${formatCurrency(b.discount_amount)}` : '£0.00'}</td>
+          <td>${b.donation ? formatCurrency(b.donation) : '—'}</td>
           <td><strong>${formatCurrency(b.total_price)}</strong></td>
           <td><span class="badge badge-neutral">${escapeHtml(b.payment_method || 'other')}</span></td>
           <td>${getStatusBadge(b.status)}</td>
@@ -384,7 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const txHtml = transactions.length
         ? `<table class="data-table"><thead><tr><th>Type</th><th>Method</th><th>Gross</th><th>Fee</th><th>Net</th><th>Discount</th></tr></thead><tbody>${transactions.map((x) => `
             <tr>
-              <td>${escapeHtml(x.line_type || '—')}${x.is_refund ? ' <span class="badge badge-danger">refund</span>' : ''}</td>
+              <td>${escapeHtml(x.line_type || '—')}${x.is_refund ? ' <span class="badge badge-danger">refund</span>' : ''}${x.line_type === 'DONATION' && x.gift_aid ? ' <span class="badge badge-success">Gift Aid</span>' : ''}</td>
               <td>${escapeHtml(x.payment_method || '—')}</td>
               <td>${x.is_refund ? '-' : ''}${formatCurrency(x.gross)}</td>
               <td>${formatCurrency((x.fee || 0) + (x.fee_vat || 0))}</td>
@@ -409,7 +415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           <p><strong>Payment Method:</strong> ${escapeHtml(b.payment_method || '—')}</p>
           <p><strong>Subtotal:</strong> ${formatCurrency(b.subtotal)}</p>
           <p><strong>Discount:</strong> -${formatCurrency(b.discount_amount)} ${b.discount_code ? `(${escapeHtml(b.discount_code)})` : ''}</p>
-          <p><strong>Total:</strong> <strong>${formatCurrency(b.total_price)}</strong></p>
+          <p><strong>Total:</strong> <strong>${formatCurrency(b.total_price)}</strong>${(b.transactions || []).some(x => x.line_type === 'DONATION') ? ' (includes a donation)' : ''}</p>
         </div>
 
         <div>
@@ -494,20 +500,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         const breakdown = (await tRes.json()).breakdown || [];
         const tbody = document.querySelector('#ticketTypeBreakdownTable tbody');
         if (!breakdown.length) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No ticket sales downloaded for this selection.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted);">No ticket sales downloaded for this selection.</td></tr>';
         } else {
           tbody.innerHTML = breakdown.map(item => `
             <tr>
               <td><strong>${escapeHtml(item.ticket_type)}</strong>${item.unmapped ? ' <span class="badge badge-warning" title="Not in the ticket type dictionary">not mapped</span>' : ''}</td>
               <td>${item.count}</td>
-              <td>${formatCurrency(item.total_revenue)}</td>
               <td><small>${item.types.map(escapeHtml).join('<br>')}</small></td>
             </tr>
           `).join('');
         }
       }
 
-      // 2. Discount codes (from the downloaded transaction lines)
+      // 2. Donations
+      const donRes = await fetch(`/api/reports/donations?eventId=${encodeURIComponent(eventId)}`);
+      if (donRes.ok) {
+        const don = await donRes.json();
+        const totals = document.querySelector('#donationTotalsTable tbody');
+        totals.innerHTML = don.totals.length ? don.totals.map(t => `
+          <tr><td><strong>${escapeHtml(t.label)}</strong></td><td>${t.bookings}</td><td>${formatCurrency(t.total)}</td><td>${t.gift_aid_bookings}</td><td>${formatCurrency(t.gift_aid_total)}</td></tr>`).join('')
+          : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No donations in this selection.</td></tr>';
+        document.querySelector('#donationItemsTable tbody').innerHTML = don.items.map(d => `
+          <tr><td>${escapeHtml(d.event)}</td><td><code>${escapeHtml(d.reference)}</code></td><td>${formatDate(d.booking_date)}</td><td>${escapeHtml(d.customer_name || '—')}</td>
+          <td>${formatCurrency(d.amount)}</td><td>${d.gift_aid === null ? '—' : d.gift_aid ? 'Yes' : 'No'}</td></tr>`).join('');
+      }
+
+      // 3. Discount codes (from the downloaded transaction lines)
       const dRes = await fetch(`/api/reports/discounts?eventId=${encodeURIComponent(eventId)}`);
       if (dRes.ok) {
         const d = await dRes.json();
@@ -900,6 +918,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <button class="btn btn-secondary btn-sm reset-pwd-btn" data-id="${u.id}" data-username="${escapeHtml(u.username)}">
                   Reset Password
                 </button>
+                <button class="btn btn-secondary btn-sm delete-user-btn" data-id="${u.id}" data-username="${escapeHtml(u.username)}">
+                  Delete
+                </button>
               ` : '<span style="color: var(--text-muted); font-size: 0.8125rem;">Current Session</span>'}
             </td>
           </tr>
@@ -921,6 +942,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadUsers();
           } else {
             showToast('Failed to update user status', 'error');
+          }
+        });
+      });
+
+      document.querySelectorAll('.delete-user-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!window.confirm(`Permanently delete the account '${btn.dataset.username}'? This cannot be undone.`)) return;
+          const delRes = await fetch(`/api/admin/users/${btn.dataset.id}`, { method: 'DELETE' });
+          const body = await delRes.json().catch(() => ({}));
+          if (delRes.ok) {
+            showToast(body.message || 'User deleted', 'success');
+            loadUsers();
+          } else {
+            showToast(body.error || 'Failed to delete user', 'error');
           }
         });
       });
@@ -991,6 +1026,98 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch {
       showToast('Network error resetting password', 'error');
     }
+  });
+
+  // ----------------------------------------------------
+  // Change own password
+  // ----------------------------------------------------
+  document.getElementById('changePasswordBtn').addEventListener('click', () => {
+    document.getElementById('changePasswordForm').reset();
+    openModal('changePasswordModal');
+  });
+
+  document.getElementById('changePasswordForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const currentPassword = document.getElementById('currentPasswordInput').value;
+    const newPassword = document.getElementById('newPasswordInput').value;
+    if (newPassword !== document.getElementById('confirmPasswordInput').value) {
+      showToast('The new passwords do not match', 'error');
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || data.message || 'Could not change password', 'error');
+        return;
+      }
+      showToast('Password changed', 'success');
+      closeModal('changePasswordModal');
+    } catch {
+      showToast('Network error changing password', 'error');
+    }
+  });
+
+  // ----------------------------------------------------
+  // Sortable tables: click a column header to sort (again to reverse). Works on whatever rows are on screen now.
+  // ----------------------------------------------------
+  const sortValue = (cell) => {
+    const text = (cell?.dataset.sort ?? cell?.textContent ?? '').trim();
+    if (!text || text === '—') return { empty: true };
+    const num = Number(text.replace(/[£,%\s]/g, '').replace(/^\+/, ''));
+    if (/^[-+£\d.,\s%]+$/.test(text) && Number.isFinite(num)) return { num };
+    const when = /\d{4}/.test(text) && /[A-Za-z]{3}/.test(text) ? Date.parse(text) : NaN;
+    if (Number.isFinite(when)) return { num: when };
+    return { text: text.toLowerCase() };
+  };
+
+  function markSortable(table) {
+    table.querySelectorAll('thead th').forEach(th => {
+      th.classList.add('sortable');
+      th.tabIndex = 0;
+      th.setAttribute('role', 'columnheader');
+    });
+  }
+
+  function sortTable(th) {
+    const table = th.closest('table');
+    const tbody = table.querySelector('tbody');
+    const index = [...th.parentElement.children].indexOf(th);
+    const dir = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+    table.querySelectorAll('thead th').forEach(h => h.removeAttribute('aria-sort'));
+    th.setAttribute('aria-sort', dir);
+
+    const rows = [...tbody.querySelectorAll(':scope > tr')];
+    const fixedLast = rows.filter(r => r.classList.contains('total-row'));
+    const sortable = rows.filter(r => !r.classList.contains('total-row') && !r.querySelector('td[colspan]'));
+    const keyed = sortable.map(r => ({ r, v: sortValue(r.children[index]) }));
+    keyed.sort((a, b) => {
+      if (a.v.empty || b.v.empty) return (a.v.empty ? 1 : 0) - (b.v.empty ? 1 : 0); // blanks last either way
+      const c = a.v.num !== undefined && b.v.num !== undefined ? a.v.num - b.v.num : String(a.v.num ?? a.v.text).localeCompare(String(b.v.num ?? b.v.text), 'en-GB', { numeric: true });
+      return dir === 'ascending' ? c : -c;
+    });
+    tbody.append(...keyed.map(k => k.r), ...fixedLast);
+  }
+
+  document.querySelectorAll('table.data-table').forEach(markSortable);
+  // Some tables (Analysis) rebuild their header row; keep every header sortable.
+  new MutationObserver(() => {
+    document.querySelectorAll('table.data-table thead th:not(.sortable)').forEach(th => {
+      th.classList.add('sortable');
+      th.tabIndex = 0;
+    });
+  }).observe(document.querySelector('main'), { childList: true, subtree: true });
+  document.addEventListener('click', (e) => {
+    const th = e.target.closest('table.data-table thead th');
+    if (th) sortTable(th);
+  });
+  document.addEventListener('keydown', (e) => {
+    const th = e.target.closest?.('table.data-table thead th');
+    if (th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sortTable(th); }
   });
 
   // ----------------------------------------------------

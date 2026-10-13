@@ -111,6 +111,43 @@ describe('HTTP API & Authentication Integration Tests', () => {
     }
   });
 
+  test('users can change their own password', async () => {
+    const wrong = await call('POST', '/api/auth/password', { cookie: operatorCookie, json: { currentPassword: 'nope', newPassword: 'BrandNewPass123!' } });
+    assert.equal(wrong.status, 400);
+    const weak = await call('POST', '/api/auth/password', { cookie: operatorCookie, json: { currentPassword: 'OperatorPass123!', newPassword: 'short' } });
+    assert.equal(weak.status, 400);
+    assert.equal((await call('POST', '/api/auth/password', { json: { currentPassword: 'x', newPassword: 'BrandNewPass123!' } })).status, 401);
+
+    const otherSession = cookieOf(await call('POST', '/api/auth/login', { json: { username: 'operatoruser', password: 'OperatorPass123!' } }));
+    const ok = await call('POST', '/api/auth/password', { cookie: operatorCookie, json: { currentPassword: 'OperatorPass123!', newPassword: 'BrandNewPass123!' } });
+    assert.equal(ok.status, 200);
+    assert.equal((await call('GET', '/api/auth/me', { cookie: operatorCookie })).status, 200); // this session stays signed in
+    assert.equal((await call('GET', '/api/auth/me', { cookie: otherSession })).status, 401); // others are signed out
+    assert.equal((await call('POST', '/api/auth/login', { json: { username: 'operatoruser', password: 'OperatorPass123!' } })).status, 401);
+    assert.equal((await call('POST', '/api/auth/login', { json: { username: 'operatoruser', password: 'BrandNewPass123!' } })).status, 200);
+  });
+
+  test('admins can delete accounts, but not their own or the last administrator', async () => {
+    const users = (await call('GET', '/api/admin/users', { cookie: adminCookie })).body.users;
+    const id = (name) => users.find((u) => u.username === name).id;
+
+    assert.equal((await call('DELETE', `/api/admin/users/${id('vieweruser')}`, { cookie: operatorCookie })).status, 403);
+    assert.equal((await call('DELETE', `/api/admin/users/${id('adminuser')}`, { cookie: adminCookie })).status, 400); // yourself
+    assert.equal((await call('DELETE', '/api/admin/users/99999', { cookie: adminCookie })).status, 404);
+
+    const del = await call('DELETE', `/api/admin/users/${id('vieweruser')}`, { cookie: adminCookie });
+    assert.equal(del.status, 200);
+    assert.equal((await call('GET', '/api/auth/me', { cookie: viewerCookie })).status, 401); // their sessions went with them
+    assert.equal((await call('POST', '/api/auth/login', { json: { username: 'vieweruser', password: 'ViewerPass123!' } })).status, 401);
+
+    // another admin exists -> the first admin may be deleted by them; the last one may not
+    await addUser('admin2', 'AdminTwoPass123!', 'admin');
+    const admin2 = cookieOf(await call('POST', '/api/auth/login', { json: { username: 'admin2', password: 'AdminTwoPass123!' } }));
+    assert.equal((await call('DELETE', `/api/admin/users/${id('adminuser')}`, { cookie: admin2 })).status, 200);
+    const last = (await call('GET', '/api/admin/users', { cookie: admin2 })).body.users.find((u) => u.username === 'admin2');
+    assert.equal((await call('DELETE', `/api/admin/users/${last.id}`, { cookie: admin2 })).status, 400);
+  });
+
   test('Admin user management endpoints work for admin and are blocked for operator', async () => {
     assert.equal((await call('GET', '/api/admin/users', { cookie: operatorCookie })).status, 403);
 

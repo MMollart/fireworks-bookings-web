@@ -63,7 +63,9 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   cover show "No data", never zero. TicketSource supplies no currency, so amounts are recorded as GBP; the analysis keeps currencies separate.
 - The app only displays what comes from TicketSource: there is no way to create events or bookings, and no ticket check-in
   (tickets are scanned with the TicketSource app). Nothing is ever sent to TicketSource.
-- Event names are always shown with the year of the performance ("2026 Lydiard Fireworks & Bonfire Spectacular").
+- Events are labelled by the year of the performance only ("2026"), in tables and charts alike.
+- No price per ticket is assumed (TicketSource only gives booking totals), so ticket reports show counts. Donations (`DONATION` booking lines, with Gift Aid) are reported separately from ticket revenue.
+- Analysis > **All years** compares every event as bars (earliest to latest), for all sales or to the equivalent date in the sales cycle. Every table sorts by clicking a column header; users can change their own password; admins can delete accounts.
 - The **Overview** shows one event's figures and defaults to the latest event.
 - **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
   customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search

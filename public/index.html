@@ -18,12 +18,12 @@
           <div class="brand-subtitle">Bookings and Check-In</div>
         </div>
       </div>
-      <img class="scouts-mark" src="/images/scouts-white-stacked.png" alt="Swindon Scouts">
       <div class="user-nav">
         <div class="user-badge">
           <span id="navUsername">Loading...</span>
           <span id="navRole" class="role-pill">viewer</span>
         </div>
+        <button id="changePasswordBtn" class="btn btn-secondary btn-sm" title="Change your password">Change Password</button>
         <button id="logoutBtn" class="btn btn-secondary btn-sm" title="Sign Out">
           Sign Out
         </button>
@@ -78,6 +78,11 @@
           <div class="kpi-label">Tickets Sold</div>
           <div class="kpi-value" id="kpiTickets">0</div>
           <div class="kpi-sub" id="kpiTicketBreakdown">&nbsp;</div>
+        </div>
+        <div class="kpi-card accent-blue">
+          <div class="kpi-label">Donations</div>
+          <div class="kpi-value" id="kpiDonations">£0.00</div>
+          <div class="kpi-sub" id="kpiDonationsSub">No donations</div>
         </div>
         <div class="kpi-card accent-purple">
           <div class="kpi-label">Customers</div>
@@ -168,7 +173,7 @@
                 <tr>
                   <th>Event</th>
                   <th>TicketSource status</th>
-                  <th>Performances</th>
+                  <th>Date</th>
                   <th>Bookings downloaded</th>
                   <th>Actions</th>
                 </tr>
@@ -219,6 +224,7 @@
                   <th>Tickets</th>
                   <th>Subtotal</th>
                   <th>Discount</th>
+                  <th>Donation</th>
                   <th>Total</th>
                   <th>Payment</th>
                   <th>Status</th>
@@ -226,7 +232,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="10" style="text-align: center;">Loading bookings...</td></tr>
+                <tr><td colspan="11" style="text-align: center;">Loading bookings...</td></tr>
               </tbody>
             </table>
           </div>
@@ -290,7 +296,7 @@
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">Ticket Tier Distribution</h3>
-          <p class="section-desc">Uses the ticket type dictionary set in Configuration. Revenue is the booking total shared equally across its tickets.</p>
+          <p class="section-desc">Uses the ticket type dictionary set in Configuration. TicketSource gives no price per ticket, so only counts are shown.</p>
         </div>
         <div class="card-body">
           <div class="table-responsive">
@@ -299,13 +305,39 @@
                 <tr>
                   <th>Category</th>
                   <th>Tickets</th>
-                  <th>Revenue</th>
                   <th>Ticket types included</th>
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="4" style="text-align: center;">Loading breakdown...</td></tr>
+                <tr><td colspan="3" style="text-align: center;">Loading breakdown...</td></tr>
               </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Donations</h3>
+          <p class="section-desc">Donation lines on bookings. Kept separate from ticket revenue; refunds subtract.</p>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="data-table" id="donationTotalsTable">
+              <thead>
+                <tr><th>Event</th><th>Bookings with a donation</th><th>Total donated</th><th>Gift Aid bookings</th><th>Gift Aid total</th></tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" style="text-align: center;">Loading donations...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-responsive" style="margin-top: 1rem;">
+            <table class="data-table" id="donationItemsTable">
+              <thead>
+                <tr><th>Event</th><th>Booking</th><th>Booked</th><th>Donor</th><th>Amount</th><th>Gift Aid</th></tr>
+              </thead>
+              <tbody></tbody>
             </table>
           </div>
         </div>
@@ -350,11 +382,10 @@
           <div class="filter-bar">
             <label class="form-label" for="analysisEvent">Event</label>
             <select id="analysisEvent" class="filter-select"></select>
-            <label class="form-label" for="analysisPerformance">Performance</label>
-            <select id="analysisPerformance" class="filter-select"></select>
             <div class="mode-switch" role="tablist" aria-label="Analysis mode">
               <button class="btn btn-secondary btn-sm mode-btn active" data-mode="sales" role="tab" aria-selected="true">Sales over time</button>
               <button class="btn btn-secondary btn-sm mode-btn" data-mode="compare" role="tab" aria-selected="false">Compare events</button>
+              <button class="btn btn-secondary btn-sm mode-btn" data-mode="years" role="tab" aria-selected="false">All years</button>
             </div>
           </div>
 
@@ -372,6 +403,7 @@
               <option value="bookings">Bookings</option>
               <option value="gross">Revenue (gross)</option>
               <option value="net">Revenue (net)</option>
+              <option value="donations">Donations</option>
             </select>
             <select id="salesCurrency" class="filter-select" aria-label="Currency" style="display: none;"></select>
           </div>
@@ -398,6 +430,23 @@
             <input type="number" id="compareCutoff" class="search-input" style="flex: 0 0 110px; min-width: 110px;" min="0" step="1" placeholder="All sales">
             <button class="btn btn-secondary btn-sm" id="compareCutoffToday" type="button" title="Compare up to the same point in the sales cycle as the selected event is at today">Use today's point</button>
             <label class="form-label"><input type="checkbox" id="compareAverage"> Show average across all events</label>
+          </div>
+
+          <div class="filter-bar" id="analysisYearsControls" style="display: none;">
+            <label class="form-label" for="yearsMeasure">Measure</label>
+            <select id="yearsMeasure" class="filter-select">
+              <option value="tickets">Tickets</option>
+              <option value="bookings">Bookings</option>
+              <option value="gross">Revenue (gross)</option>
+              <option value="net">Revenue (net)</option>
+              <option value="donations">Donations</option>
+            </select>
+            <label class="form-label" for="yearsMode">Sales</label>
+            <select id="yearsMode" class="filter-select">
+              <option value="all">All sales</option>
+              <option value="equivalent">To the equivalent date</option>
+            </select>
+            <select id="yearsCurrency" class="filter-select" aria-label="Currency" style="display: none;"></select>
           </div>
         </div>
       </div>
@@ -440,8 +489,6 @@
             <span id="discountEventControls" class="filter-bar" style="margin: 0;">
               <label class="form-label" for="discountEvent">Event</label>
               <select id="discountEvent" class="filter-select"></select>
-              <label class="form-label" for="discountPerformance">Performance</label>
-              <select id="discountPerformance" class="filter-select"></select>
             </span>
           </div>
         </div>
@@ -671,6 +718,37 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary close-modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Update Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Change Own Password Modal -->
+  <div id="changePasswordModal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 class="modal-title">Change Your Password</h3>
+        <button class="btn btn-secondary btn-sm close-modal">&times;</button>
+      </div>
+      <form id="changePasswordForm">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="currentPasswordInput">Current password</label>
+            <input type="password" id="currentPasswordInput" class="form-control" autocomplete="current-password" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="newPasswordInput">New password</label>
+            <input type="password" id="newPasswordInput" class="form-control" autocomplete="new-password" placeholder="Minimum 8 characters" required minlength="8">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="confirmPasswordInput">Confirm new password</label>
+            <input type="password" id="confirmPasswordInput" class="form-control" autocomplete="new-password" required minlength="8">
+          </div>
+          <div class="form-help">Any other devices you are signed in on will be signed out.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Change Password</button>
         </div>
       </form>
     </div>

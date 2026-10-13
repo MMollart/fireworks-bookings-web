@@ -75,6 +75,26 @@ export function adminRoutes() {
     });
   });
 
+  // Permanently deletes an account. Not your own, and never the last active administrator.
+  r.delete('/users/:id', async (c) => {
+    const db = c.get('db');
+    const userId = parseInt(c.req.param('id'), 10);
+    if (c.get('user').id === userId) return c.json({ error: 'You cannot delete your own account' }, 400);
+
+    const target = await db.prepare('SELECT id, username, role, is_active FROM users WHERE id = ?').get(userId);
+    if (!target) return c.json({ error: 'User not found' }, 404);
+    if (target.role === 'admin' && target.is_active) {
+      const { n } = await db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1 AND id <> ?").get(userId);
+      if (n === 0) return c.json({ error: 'You cannot delete the last active administrator' }, 400);
+    }
+
+    await db.batch([
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+    ]);
+    return c.json({ success: true, message: `User '${target.username}' deleted` });
+  });
+
   const resetPassword = async (c) => {
     const db = c.get('db');
     const userId = parseInt(c.req.param('id'), 10);

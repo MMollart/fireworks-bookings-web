@@ -8,6 +8,7 @@ import {
   exportBookingsCsv,
   exportTransactionsCsv,
 } from '../domain/reports.js';
+import { donationTotals, listDonations } from '../domain/donations.js';
 
 export function reportRoutes() {
   const r = new Hono();
@@ -28,6 +29,12 @@ export function reportRoutes() {
   r.get('/discounts', async (c) => {
     const eventId = c.req.query('eventId');
     return c.json(await getDiscountCodeReport(c.get('db'), { eventId: eventId && eventId !== 'all' ? eventId : undefined }));
+  });
+
+  r.get('/donations', async (c) => {
+    const eventId = c.req.query('eventId');
+    const scope = eventId && eventId !== 'all' ? { eventId } : {};
+    return c.json({ totals: await donationTotals(c.get('db'), scope), items: await listDonations(c.get('db'), scope) });
   });
 
   r.get('/tickets', async (c) => c.json({ breakdown: await getTicketTypeBreakdown(c.get('db'), c.req.query('eventId')) }));

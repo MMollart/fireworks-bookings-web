@@ -148,13 +148,6 @@ body {
   color: var(--glow);
 }
 
-.scouts-mark {
-  display: block;
-  height: 72px; /* the logo file carries clear space; the layout box stays 44px */
-  width: auto;
-  margin: -14px 0;
-}
-
 .user-nav {
   display: flex;
   align-items: center;
@@ -756,7 +749,6 @@ body {
 }
 
 @media (max-width: 900px) {
-  .scouts-mark { display: none; }
   .header-inner { padding: var(--space-2) var(--space-4); }
   .main-content { padding: 0 var(--space-4); }
 }
@@ -821,3 +813,10 @@ body {
 .legend-nodata { background: repeating-linear-gradient(45deg, var(--divider) 0 3px, transparent 3px 6px); }
 
 #analysisNotices { margin-bottom: var(--space-4); }
+
+/* Sortable tables */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable::after { content: ' \2195'; color: var(--ink-muted); opacity: 0.5; font-size: 0.85em; }
+th.sortable[aria-sort="ascending"]::after { content: ' \25B2'; opacity: 1; color: var(--night); }
+th.sortable[aria-sort="descending"]::after { content: ' \25BC'; opacity: 1; color: var(--night); }
+th.sortable:hover { color: var(--night); }

@@ -12,7 +12,7 @@
  * An admin can still pin an event to settled/unsettled (ts_events.state_override).
  */
 
-import { withYear } from '../lib/eventName.js';
+import { eventLabel } from '../lib/eventName.js';
 
 const DAY_MS = 86_400_000;
 
@@ -106,7 +106,7 @@ export async function refreshDates(db, client, tsEvent, now = Date.now()) {
              status = CASE WHEN excluded.status = 'cancelled' THEN 'cancelled' WHEN events.status = 'cancelled' THEN 'active' ELSE events.status END,
              ts_event_id = excluded.ts_event_id, updated_at = excluded.updated_at`
         )
-        .bind(d.id, withYear(tsEvent.name, starts), starts || a.created_at || new Date(now).toISOString(), a.doors_open ?? null, a.cancelled ? 'cancelled' : 'active', tsEvent.id, new Date(now).toISOString(), new Date(now).toISOString())
+        .bind(d.id, eventLabel(tsEvent.name, starts), starts || a.created_at || new Date(now).toISOString(), a.doors_open ?? null, a.cancelled ? 'cancelled' : 'active', tsEvent.id, new Date(now).toISOString(), new Date(now).toISOString())
     );
   }
   stmts.push(db.prepare('UPDATE ts_events SET dates_fetched_at = ? WHERE id = ?').bind(now, tsEvent.id));
@@ -153,7 +153,7 @@ export async function listEventSummaries(db, { settlementDays, now = Date.now(),
     const synced = ds.map((d) => d.last_synced_at).filter(Boolean).sort();
     return {
       id: e.id,
-      name: withYear(e.name, ds[0]?.starts_at),
+      name: eventLabel(e.name, ds[0]?.starts_at),
       reference: e.reference,
       state: eventState(e, ds, settlementDays, now),
       state_pinned: e.state_override || null,

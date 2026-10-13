@@ -6,7 +6,7 @@ import { initConfig, config } from '../src/config.js';
 import { TicketSourceClient, StepLimit, rateStatus, parseRetryAfter } from '../src/ticketsource/client.js';
 import { refreshEvents, listEventSummaries, eventState } from '../src/ticketsource/events.js';
 import { syncEventStep } from '../src/ticketsource/engine.js';
-import { summariseLines, ticketPrices } from '../src/ticketsource/ingest.js';
+import { summariseLines } from '../src/ticketsource/ingest.js';
 import { getBookingById, listBookings } from '../src/domain/bookings.js';
 
 const DAY = 86_400_000;
@@ -279,7 +279,7 @@ describe('TicketSource integration', () => {
     }
   });
 
-  test('helpers: line totals, price splitting and Retry-After parsing', () => {
+  test('helpers: line totals and Retry-After parsing', () => {
     const lines = [
       { line_type: 'TICKETS', amount: { gross: 30, discounts: { code: { description: 'X', amount: 3 }, automatic: 1 } } },
       { line_type: 'TICKETS', is_refund: true, amount: { gross: 10 } },
@@ -289,9 +289,6 @@ describe('TicketSource integration', () => {
     assert.equal(s.discount, 4);
     assert.equal(s.status, 'confirmed');
     assert.equal(summariseLines([{ line_type: 'TICKETS', amount: { gross: 5 } }, { line_type: 'TICKETS', is_refund: true, amount: { gross: 5 } }]).status, 'refunded');
-
-    const prices = ticketPrices(10, 3);
-    assert.equal(Math.round(prices.reduce((a, b) => a + b, 0) * 100), 1000);
 
     assert.equal(parseRetryAfter('12'), 12_000);
     assert.equal(parseRetryAfter(null), null);

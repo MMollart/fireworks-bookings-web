@@ -1,7 +1,8 @@
 import { listBookings } from './bookings.js';
 import { loadCategoryMap, typeKey } from './ticketTypes.js';
 import { loadCodeLines, summariseDiscounts } from '../analysis/discounts.js';
-import { withYear } from '../lib/eventName.js';
+import { eventLabel } from '../lib/eventName.js';
+import { donationTotals } from './donations.js';
 
 /** TicketSource events with performance dates, newest first, each with booking / ticket / revenue totals. */
 export async function listEventTotals(db) {
@@ -21,6 +22,7 @@ export async function listEventTotals(db) {
        WHERE b.status = 'confirmed' AND b.ts_booking_id IS NOT NULL GROUP BY d.event_id`
     )
     .all();
+  const donations = new Map((await donationTotals(db)).map((d) => [d.event_id, d.total]));
   const bMap = new Map(bookings.map((r) => [r.event_id, r]));
   const tMap = new Map(tickets.map((r) => [r.event_id, r.tickets]));
   const first = new Map(firsts.map((r) => [r.event_id, r.first_start]));
@@ -29,11 +31,12 @@ export async function listEventTotals(db) {
     .filter((e) => first.has(e.id))
     .map((e) => ({
       id: e.id,
-      name: withYear(e.name, first.get(e.id)),
+      name: eventLabel(e.name, first.get(e.id)),
       starts_at: first.get(e.id),
       bookings: bMap.get(e.id)?.bookings || 0,
       tickets_sold: tMap.get(e.id) || 0,
-      gross_revenue: bMap.get(e.id)?.gross_revenue || 0,
+      gross_revenue: Math.round(((bMap.get(e.id)?.gross_revenue || 0) - (donations.get(e.id) || 0)) * 100) / 100,
+      donations: donations.get(e.id) || 0,
     }))
     .sort((a, b) => String(b.starts_at).localeCompare(String(a.starts_at)));
 }
@@ -58,8 +61,10 @@ export async function getDashboardSummary(db, { eventId } = {}) {
     )
     .get(selected.id);
 
+  const donation = (await donationTotals(db, { eventId: selected.id }))[0] || { total: 0, bookings: 0, gift_aid_bookings: 0, gift_aid_total: 0 };
+  const grossRevenue = Math.round((stats.gross_revenue - donation.total) * 100) / 100; // ticket revenue: donations are separate
   const confirmed = stats.confirmed_bookings || 0;
-  const aov = confirmed > 0 ? parseFloat((stats.gross_revenue / confirmed).toFixed(2)) : 0;
+  const aov = confirmed > 0 ? parseFloat((grossRevenue / confirmed).toFixed(2)) : 0;
   const breakdown = await getTicketTypeBreakdown(db, selected.id);
 
   return {
@@ -67,12 +72,13 @@ export async function getDashboardSummary(db, { eventId } = {}) {
     event: { id: selected.id, name: selected.name, starts_at: selected.starts_at },
     events,
     financials: {
-      gross_revenue: stats.gross_revenue,
+      gross_revenue: grossRevenue,
       total_discounts: stats.total_discounts,
-      net_revenue: parseFloat((stats.gross_revenue - stats.total_discounts).toFixed(2)),
+      net_revenue: parseFloat((grossRevenue - stats.total_discounts).toFixed(2)),
       confirmed_bookings: confirmed,
       aov,
     },
+    donations: { total: donation.total, bookings: donation.bookings, gift_aid_bookings: donation.gift_aid_bookings, gift_aid_total: donation.gift_aid_total },
     bookings: { total: stats.total_bookings_all || 0, confirmed, refunded: stats.refunded_bookings || 0 },
     tickets: { tickets_sold: selected.tickets_sold, breakdown },
     customers: { total: stats.customers || 0 },
@@ -119,7 +125,7 @@ export async function getDiscountCodeReport(db, { eventId } = {}) {
  */
 export async function getTicketTypeBreakdown(db, eventId = null) {
   let sql = `
-    SELECT t.ticket_type, COUNT(t.id) AS count, COALESCE(SUM(t.price), 0) AS total_revenue
+    SELECT t.ticket_type, COUNT(t.id) AS count
     FROM tickets t
     JOIN bookings b ON t.booking_id = b.id
     WHERE b.status = 'confirmed' AND b.ts_booking_id IS NOT NULL`;
@@ -135,14 +141,13 @@ export async function getTicketTypeBreakdown(db, eventId = null) {
   for (const r of await db.prepare(sql).all(...params)) {
     const category = map.get(typeKey(r.ticket_type));
     const label = category ?? String(r.ticket_type).replace(/\s+/g, ' ').trim();
-    const g = groups.get(label) || { ticket_type: label, unmapped: category === undefined, count: 0, total_revenue: 0, types: new Set() };
+    const g = groups.get(label) || { ticket_type: label, unmapped: category === undefined, count: 0, types: new Set() };
     g.count += r.count;
-    g.total_revenue += r.total_revenue;
     g.types.add(String(r.ticket_type).replace(/\s+/g, ' ').trim());
     groups.set(label, g);
   }
   return [...groups.values()]
-    .map((g) => ({ ticket_type: g.ticket_type, unmapped: g.unmapped, count: g.count, total_revenue: Math.round(g.total_revenue * 100) / 100, types: [...g.types].sort() }))
+    .map((g) => ({ ticket_type: g.ticket_type, unmapped: g.unmapped, count: g.count, types: [...g.types].sort() }))
     .sort((a, b) => b.count - a.count || a.ticket_type.localeCompare(b.ticket_type));
 }
 

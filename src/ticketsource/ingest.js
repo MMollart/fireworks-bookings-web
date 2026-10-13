@@ -29,36 +29,24 @@ export function idFromLink(link) {
 export function summariseLines(lines = []) {
   let paid = 0;
   let refunded = 0;
-  let ticketTotal = 0;
   let discount = 0;
   const codes = [];
 
   for (const line of lines) {
     const amt = line.amount || {};
     const gross = Number(amt.gross) || 0;
-    const sign = line.is_refund ? -1 : 1;
     if (line.is_refund) refunded += gross;
     else paid += gross;
-    if (line.line_type === 'TICKETS') ticketTotal += sign * gross;
     discount += (Number(amt.discounts?.code?.amount) || 0) + (Number(amt.discounts?.automatic) || 0);
     if (amt.discounts?.code?.description && Number(amt.discounts.code.amount) > 0) codes.push(amt.discounts.code.description);
   }
 
   return {
     total: round2(paid - refunded),
-    ticketTotal: Math.max(0, round2(ticketTotal)),
     discount: round2(discount),
     codes,
     status: paid > 0 && refunded >= paid ? 'refunded' : 'confirmed',
   };
-}
-
-export function ticketPrices(total, count) {
-  if (count <= 0) return [];
-  const each = round2(total / count);
-  const prices = Array(count).fill(each);
-  prices[0] = round2(total - each * (count - 1)); // remainder on the first so the sum is exact
-  return prices;
 }
 
 /** Returns our customer id for a TicketSource customer link, fetching (1 API call) only when not cached. */
@@ -134,7 +122,6 @@ export async function ingestBooking(db, client, booking, ctx) {
     .sort((x, y) => String(x.id).localeCompare(String(y.id)));
 
   const money = summariseLines(a.lines);
-  const prices = ticketPrices(money.ticketTotal, seats.length);
 
   // Match an existing row by TicketSource id, or by reference (bookings imported by an earlier version)
   const existing = await db
@@ -214,7 +201,8 @@ export async function ingestBooking(db, client, booking, ctx) {
              ticket_type = excluded.ticket_type, price = excluded.price, barcode = excluded.barcode,
              attendee_encrypted = excluded.attendee_encrypted`
         )
-        .bind(s.id, bookingId, date.id, s.attributes?.price_category || 'Standard', prices[i], `${a.ref}-${i + 1}`, attendee, s.attributes?.created_at || iso)
+        // TicketSource gives no price per ticket, so none is assumed (price stays 0)
+        .bind(s.id, bookingId, date.id, s.attributes?.price_category || 'Standard', 0, `${a.ref}-${i + 1}`, attendee, s.attributes?.created_at || iso)
     );
   }
 

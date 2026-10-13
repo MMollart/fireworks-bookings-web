@@ -17,8 +17,7 @@ export async function getEventById(db, id) {
   const stats = await db.prepare(`
     SELECT 
       COUNT(DISTINCT b.id) AS confirmed_bookings,
-      COUNT(t.id) AS tickets_sold,
-      COALESCE(SUM(t.price), 0) AS gross_revenue
+      COUNT(t.id) AS tickets_sold
     FROM bookings b
     LEFT JOIN tickets t ON b.id = t.booking_id
     WHERE b.event_id = ? AND b.status = 'confirmed'
@@ -26,7 +25,7 @@ export async function getEventById(db, id) {
 
   // Breakdown by ticket type
   const ticketTypes = await db.prepare(`
-    SELECT t.ticket_type, COUNT(t.id) AS count, COALESCE(SUM(t.price), 0) AS revenue
+    SELECT t.ticket_type, COUNT(t.id) AS count
     FROM tickets t
     JOIN bookings b ON t.booking_id = b.id
     WHERE b.event_id = ? AND b.status = 'confirmed'
@@ -39,9 +38,6 @@ export async function getEventById(db, id) {
     stats: {
       confirmed_bookings: stats.confirmed_bookings || 0,
       tickets_sold: stats.tickets_sold || 0,
-      gross_revenue: stats.gross_revenue || 0,
-      occupancy_pct: event.capacity > 0 ? Math.min(100, Math.round(((stats.tickets_sold || 0) / event.capacity) * 100)) : 0,
-      remaining_capacity: Math.max(0, event.capacity - (stats.tickets_sold || 0)),
     },
     ticket_types: ticketTypes,
   };

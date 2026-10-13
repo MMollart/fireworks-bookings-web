@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { config } from '../config.js';
-import { verifyPassword, hashPassword } from '../auth/passwords.js';
-import { createSession, destroySession, getSessionCookieOptions } from '../auth/sessions.js';
+import { verifyPassword, hashPassword, validatePasswordPolicy } from '../auth/passwords.js';
+import { createSession, destroySession, hashSessionToken, getSessionCookieOptions } from '../auth/sessions.js';
 import { requireAuth } from '../auth/middleware.js';
 import { hit, clear, clientIp } from '../middleware/rateLimit.js';
 
@@ -68,6 +68,31 @@ export function authRoutes() {
     if (token) await destroySession(c.get('db'), token);
     deleteCookie(c, config.sessionCookieName, { path: '/' });
     return c.json({ success: true, message: 'Logged out successfully' });
+  });
+
+  // Users change their own password; every other session of theirs is signed out.
+  r.post('/password', requireAuth, async (c) => {
+    const db = c.get('db');
+    const user = c.get('user');
+    const rl = await hit(db, `password:${user.id}`, LOGIN_LIMIT);
+    if (rl.limited) {
+      c.header('Retry-After', String(rl.retryAfter));
+      return c.json({ error: 'Too many attempts. Please wait before trying again.' }, 429);
+    }
+
+    const { currentPassword, newPassword } = await c.req.json().catch(() => ({}));
+    if (typeof currentPassword !== 'string' || !currentPassword) return c.json({ error: 'Your current password is required' }, 400);
+    const policy = validatePasswordPolicy(newPassword);
+    if (!policy.valid) return c.json({ error: policy.error }, 400);
+    if (newPassword === currentPassword) return c.json({ error: 'The new password must be different from the current one' }, 400);
+
+    const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id);
+    if (!row || !(await verifyPassword(currentPassword, row.password_hash))) return c.json({ error: 'Your current password is not correct' }, 400);
+
+    await db.prepare("UPDATE users SET password_hash = ?, salt = '', updated_at = ? WHERE id = ?").run(await hashPassword(newPassword), new Date().toISOString(), user.id);
+    await db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(user.id, await hashSessionToken(c.get('sessionToken')));
+    await clear(db, `password:${user.id}`);
+    return c.json({ success: true, message: 'Password changed' });
   });
 
   r.get('/me', requireAuth, (c) => c.json({ user: c.get('user') }));

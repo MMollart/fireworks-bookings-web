@@ -1,4 +1,4 @@
-import { withYear } from '../lib/eventName.js';
+import { eventLabel } from '../lib/eventName.js';
 
 /** Loads bookings, seats (tickets) and financial lines from the local database for a scope. */
 
@@ -24,7 +24,7 @@ export async function loadEventName(db, id) {
   const e = await db.prepare('SELECT id, name FROM ts_events WHERE id = ?').get(id);
   if (!e) return null;
   const first = await db.prepare('SELECT MIN(starts_at) AS s FROM ts_dates WHERE event_id = ?').get(id);
-  return { id: e.id, name: withYear(e.name, first?.s) };
+  return { id: e.id, name: eventLabel(e.name, first?.s) };
 }
 
 /** Events that have downloaded bookings, with their performances and download completeness. */
@@ -39,7 +39,7 @@ export async function loadScopeOptions(db) {
   const dates = await db.prepare('SELECT id, event_id, starts_at, last_synced_at, scan_state, cancelled FROM ts_dates ORDER BY starts_at').all();
   const firstStart = new Map();
   for (const d of dates) if (d.starts_at && !firstStart.has(d.event_id)) firstStart.set(d.event_id, d.starts_at);
-  const named = events.map((e) => ({ ...e, name: withYear(e.name, firstStart.get(e.id)), first_start: firstStart.get(e.id) || '' }));
+  const named = events.map((e) => ({ ...e, name: eventLabel(e.name, firstStart.get(e.id)), first_start: firstStart.get(e.id) || '' }));
   named.sort((a, b) => b.first_start.localeCompare(a.first_start) || a.name.localeCompare(b.name)); // newest event first
   return { events: named, dates };
 }
@@ -73,7 +73,10 @@ export async function loadBookings(db, scope = {}) {
 
   const money = await db
     .prepare(
-      `SELECT x.booking_id, x.currency, SUM(${signed('gross')}) AS gross, SUM(${signed('net')}) AS net
+      `SELECT x.booking_id, x.currency,
+              SUM(CASE WHEN x.line_type = 'DONATION' THEN 0 ELSE ${signed('gross')} END) AS gross,
+              SUM(CASE WHEN x.line_type = 'DONATION' THEN 0 ELSE ${signed('net')} END) AS net,
+              SUM(CASE WHEN x.line_type = 'DONATION' THEN ${signed('gross')} ELSE 0 END) AS donations
        FROM booking_transactions x JOIN bookings b ON b.id = x.booking_id JOIN ts_dates d ON d.id = b.event_id
        WHERE ${where} GROUP BY x.booking_id, x.currency`
     )
@@ -82,7 +85,7 @@ export async function loadBookings(db, scope = {}) {
   const byBooking = new Map();
   for (const m of money) {
     if (!byBooking.has(m.booking_id)) byBooking.set(m.booking_id, {});
-    byBooking.get(m.booking_id)[m.currency] = { gross: m.gross, net: m.net };
+    byBooking.get(m.booking_id)[m.currency] = { gross: m.gross, net: m.net, donations: m.donations };
   }
 
   return {
@@ -93,21 +96,25 @@ export async function loadBookings(db, scope = {}) {
 
 export function addMoney(target, money, sign = 1) {
   for (const [cur, v] of Object.entries(money)) {
-    target[cur] ??= { gross: 0, net: 0 };
+    target[cur] ??= { gross: 0, net: 0, donations: 0 };
     target[cur].gross += sign * v.gross;
     target[cur].net += sign * v.net;
+    target[cur].donations += sign * (v.donations || 0);
   }
 }
 
 export const round2 = (n) => Math.round(n * 100) / 100;
 
-/** { GBP: { gross, net } } -> separate { gross: {GBP}, net: {GBP} }, rounded. */
+/** { GBP: { gross, net, donations } } -> separate { gross: {GBP}, net: {GBP}, donations: {GBP} }, rounded.
+ *  Gross and net are ticket (non-donation) money; donations are reported on their own. */
 export function splitMoney(m) {
   const gross = {};
   const net = {};
+  const donations = {};
   for (const [cur, v] of Object.entries(m)) {
     gross[cur] = round2(v.gross);
     net[cur] = round2(v.net);
+    donations[cur] = round2(v.donations || 0);
   }
-  return { gross, net };
+  return { gross, net, donations };
 }

@@ -4,16 +4,12 @@ import { loadScopeOptions, loadBookings, isComplete, loadEventName } from '../an
 import { salesOverTime, GROUPS } from '../analysis/sales.js';
 import { compareEvents, COMPARE_GROUPS } from '../analysis/compare.js';
 import { loadCodeLines, summariseDiscounts } from '../analysis/discounts.js';
+import { yearlyTotals } from '../analysis/years.js';
 import { eventState } from '../ticketsource/events.js';
 
 async function requireEvent(db, id) {
   if (!id) return null;
   return loadEventName(db, id);
-}
-
-async function checkPerformance(db, eventId, performanceId) {
-  if (!performanceId) return true;
-  return Boolean(await db.prepare('SELECT 1 AS ok FROM ts_dates WHERE id = ? AND event_id = ?').get(performanceId, eventId));
 }
 
 export function analysisRoutes() {
@@ -43,23 +39,21 @@ export function analysisRoutes() {
 
   r.get('/sales', async (c) => {
     const db = c.get('db');
-    const { eventId, performanceId, group = 'whole' } = c.req.query();
+    const { eventId, group = 'whole' } = c.req.query();
     if (!GROUPS.includes(group)) return c.json({ error: `group must be one of ${GROUPS.join(', ')}` }, 400);
     if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
-    if (!(await checkPerformance(db, eventId, performanceId))) return c.json({ error: 'Performance not found for this event' }, 404);
 
-    const data = await loadBookings(db, { eventId, performanceId: performanceId || undefined });
-    return c.json({ scope: { eventId, performanceId: performanceId || null }, ...salesOverTime(data, group) });
+    const data = await loadBookings(db, { eventId });
+    return c.json({ scope: { eventId }, ...salesOverTime(data, group) });
   });
 
   r.get('/compare', async (c) => {
     const db = c.get('db');
-    const { eventId, performanceId, compareEventId, group = 'whole', cutoff, average } = c.req.query();
+    const { eventId, compareEventId, group = 'whole', cutoff, average } = c.req.query();
     if (!COMPARE_GROUPS.includes(group)) return c.json({ error: `group must be one of ${COMPARE_GROUPS.join(', ')}` }, 400);
     if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
     if (!(await requireEvent(db, compareEventId))) return c.json({ error: 'Choose an event to compare with' }, 400);
     if (compareEventId === eventId) return c.json({ error: 'Choose a different event to compare with' }, 400);
-    if (!(await checkPerformance(db, eventId, performanceId))) return c.json({ error: 'Performance not found for this event' }, 404);
 
     let cut = null;
     if (cutoff !== undefined && cutoff !== '') {
@@ -68,7 +62,7 @@ export function analysisRoutes() {
     }
 
     const includeAverage = average === '1' || average === 'true';
-    const selected = await loadBookings(db, { eventId, performanceId: performanceId || undefined });
+    const selected = await loadBookings(db, { eventId });
     const comparison = await loadBookings(db, { eventId: compareEventId });
 
     let others = [];
@@ -84,23 +78,37 @@ export function analysisRoutes() {
       selected: (await requireEvent(db, eventId)).name,
       comparison: (await requireEvent(db, compareEventId)).name,
     };
-    return c.json({ scope: { eventId, performanceId: performanceId || null, compareEventId }, names, ...compareEvents({ selected, comparison, others, group, cutoff: cut, includeAverage }) });
+    return c.json({ scope: { eventId, compareEventId }, names, ...compareEvents({ selected, comparison, others, group, cutoff: cut, includeAverage }) });
+  });
+
+  // All events side by side by year. mode = all | equivalent (sales up to the same point in the sales cycle as `eventId` is at today).
+  r.get('/years', async (c) => {
+    const db = c.get('db');
+    const { eventId, mode = 'all' } = c.req.query();
+    if (!['all', 'equivalent'].includes(mode)) return c.json({ error: 'mode must be all or equivalent' }, 400);
+    if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
+
+    const { events } = await loadScopeOptions(db);
+    const list = [];
+    for (const e of events.filter((x) => x.bookings > 0 || x.id === eventId)) {
+      list.push({ id: e.id, label: e.name, firstStart: e.first_start, data: await loadBookings(db, { eventId: e.id }) });
+    }
+    return c.json({ scope: { eventId }, ...yearlyTotals({ events: list, selectedId: eventId, mode }) });
   });
 
   // Discount codes: scope=event (needs eventId) or scope=years (all events, grouped by performance year).
   r.get('/discounts', async (c) => {
     const db = c.get('db');
-    const { scope = 'event', eventId, performanceId } = c.req.query();
+    const { scope = 'event', eventId } = c.req.query();
     if (!['event', 'years'].includes(scope)) return c.json({ error: 'scope must be event or years' }, 400);
 
     let filter = {};
     if (scope === 'event') {
       if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
-      if (!(await checkPerformance(db, eventId, performanceId))) return c.json({ error: 'Performance not found for this event' }, 404);
-      filter = { eventId, performanceId: performanceId || undefined };
+      filter = { eventId };
     }
     const result = summariseDiscounts(await loadCodeLines(db, filter));
-    return c.json({ scope: { scope, eventId: filter.eventId || null, performanceId: filter.performanceId || null }, ...result });
+    return c.json({ scope: { scope, eventId: filter.eventId || null }, ...result });
   });
 
   return r;

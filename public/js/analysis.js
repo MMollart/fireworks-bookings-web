@@ -13,10 +13,9 @@
   const state = {
     options: null,
     eventId: '',
-    performanceId: '',
     mode: 'sales',
     visible: null, // 'analysis' | 'discounts'
-    req: { sales: 0, compare: 0, discounts: 0 },
+    req: { sales: 0, compare: 0, years: 0, discounts: 0 },
   };
 
   const SETUP_MESSAGE =
@@ -37,7 +36,7 @@
 
   function valueCell(measure, side, currency) {
     if (!side || side.coverage === 'none' || side[measure] === null || side[measure] === undefined) return NO_DATA;
-    const text = measure === 'gross' || measure === 'net' ? moneyCell(side[measure], currency) : esc(num(side[measure]));
+    const text = MONEY_MEASURES.includes(measure) ? moneyCell(side[measure], currency) : esc(num(side[measure]));
     return side.coverage === 'partial' ? `${text} <span class="partial-tag" title="The download of this period is incomplete">partial</span>` : text;
   }
 
@@ -45,7 +44,7 @@
     if (!side || side.coverage === 'none') return null;
     const v = side[measure];
     if (v === null || v === undefined) return null;
-    if (measure === 'gross' || measure === 'net') return v[currency] ?? 0;
+    if (MONEY_MEASURES.includes(measure)) return v[currency] ?? 0;
     return v;
   }
 
@@ -90,7 +89,7 @@
     draw(container, opts);
   }
 
-  function draw(container, { labels, series, format, title }) {
+  function draw(container, { labels, series, format, title, forceBar = false, legend: legendItems = null }) {
     const W = Math.max(280, Math.floor(container.getBoundingClientRect().width || container.parentElement?.getBoundingClientRect().width || 640));
     const narrow = W < 520;
     const H = narrow ? 300 : 340;
@@ -99,7 +98,7 @@
     const all = series.flatMap((s) => s.values).filter((v) => v !== null);
     const max = niceMax(Math.max(0, ...all));
     const n = labels.length;
-    const asLine = n > MAX_BAR_CATEGORIES;
+    const asLine = !forceBar && n > MAX_BAR_CATEGORIES;
     const y = (v) => T + plotH - (v / max) * plotH;
     const slot = plotW / Math.max(1, n); // one category's width (bars) / spacing basis (labels)
     const xCentre = (i) => (asLine ? (n === 1 ? L + plotW / 2 : L + (i * plotW) / (n - 1)) : L + i * slot + slot / 2);
@@ -146,7 +145,7 @@
           if (v === null) return;
           const x = xCentre(i) - (barW * k) / 2 + j * barW;
           const h = Math.max(v === 0 ? 0 : 1, (v / max) * plotH);
-          svg += `<rect x="${x}" y="${T + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" fill="${s.color}"><title>${esc(label)} - ${esc(s.name)}: ${esc(format(v))}</title></rect>`;
+          svg += `<rect x="${x}" y="${T + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" fill="${s.colors ? s.colors[i] : s.color}"><title>${esc(label)} - ${esc(s.name)}: ${esc(format(v))}</title></rect>`;
         });
       });
     }
@@ -162,7 +161,7 @@
     svg += `<line class="chart-marker" x1="0" x2="0" y1="${T}" y2="${T + plotH}" stroke="#231f20" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
     svg += `<rect class="chart-hit" x="${L}" y="${T}" width="${plotW}" height="${plotH}" fill="transparent"/></svg>`;
 
-    const legend = series
+    const legend = (legendItems || series)
       .map((s) => `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)}</span>`)
       .join('');
     container.innerHTML = `<div class="chart-readout" role="status" aria-live="polite">Tap or hover the chart to read values</div>${svg}<div class="legend">${legend}<span class="legend-item"><span class="legend-swatch legend-nodata"></span>No data</span></div>`;
@@ -210,20 +209,10 @@
     const events = eventsWithBookings();
     if (!events.some((e) => e.id === state.eventId)) {
       state.eventId = events[0]?.id || '';
-      state.performanceId = '';
     }
     for (const id of ['analysisEvent', 'discountEvent']) {
       fillEventSelect($(id), events, state.eventId);
       $(id).disabled = events.length === 0;
-    }
-    const ev = (state.options?.events || []).find((e) => e.id === state.eventId);
-    const perfOptions =
-      '<option value="">All performances</option>' +
-      (ev?.performances || []).map((p) => `<option value="${esc(p.id)}">${esc(dateOnly(p.starts_at))}${p.complete ? '' : ' (incomplete download)'}</option>`).join('');
-    for (const id of ['analysisPerformance', 'discountPerformance']) {
-      $(id).innerHTML = perfOptions;
-      $(id).value = state.performanceId;
-      $(id).disabled = !ev;
     }
     const others = events.filter((e) => e.id !== state.eventId);
     const prev = $('compareEvent').value;
@@ -231,9 +220,7 @@
   }
 
   function scopeQuery() {
-    const q = new URLSearchParams({ eventId: state.eventId });
-    if (state.performanceId) q.set('performanceId', state.performanceId);
-    return q;
+    return new URLSearchParams({ eventId: state.eventId });
   }
 
   async function loadOptions() {
@@ -246,7 +233,8 @@
   }
 
   // ---------- sales over time ----------
-  const MEASURE_LABEL = { tickets: 'Active tickets', bookings: 'Total bookings', gross: 'Gross revenue', net: 'Net revenue' };
+  const MONEY_MEASURES = ['gross', 'net', 'donations'];
+  const MEASURE_LABEL = { tickets: 'Active tickets', bookings: 'Total bookings', gross: 'Gross revenue', net: 'Net revenue', donations: 'Donations' };
 
   function currencySelector(sel, currencies) {
     const prev = sel.value;
@@ -263,7 +251,7 @@
   function showAnalysisLoading(kind) {
     $('analysisResults').style.display = 'none';
     notices([]);
-    setStatus('analysisStatus', 'loading', kind === 'compare' ? 'Loading comparison…' : 'Loading analysis…');
+    setStatus('analysisStatus', 'loading', kind === 'compare' ? 'Loading comparison…' : kind === 'years' ? 'Loading all years…' : 'Loading analysis…');
   }
 
   async function loadSales() {
@@ -316,7 +304,7 @@
           : `${data.undated} booking${data.undated === 1 ? ' has' : 's have'} no creation date and ${data.undated === 1 ? 'is' : 'are'} not in the rows below. They are included in the whole-event totals.`
       );
     }
-    note.push('Bookings are placed by their original creation date, but show their current tickets and financial status (not figures as at that date).');
+    note.push('Bookings are placed by their original creation date, but show their current tickets and financial status (not figures as at that date). Revenue excludes donations, which are shown separately.');
     notices(note);
 
     // totals
@@ -326,13 +314,14 @@
       ['Total bookings', esc(num(t.bookings))],
       ['Gross revenue', moneyCell(t.gross)],
       ['Net revenue', moneyCell(t.net)],
+      ['Donations', moneyCell(t.donations)],
     ].map(([label, value]) => `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">Whole event${data.undated ? ' (includes undated bookings)' : ''}</div></div>`).join('');
 
     $('analysisResults').style.display = '';
 
     // chart
     const rows = data.rows;
-    const fmt = measure === 'gross' || measure === 'net' ? (v) => money(currency, v) : (v) => num(v);
+    const fmt = MONEY_MEASURES.includes(measure) ? (v) => money(currency, v) : (v) => num(v);
     $('analysisChartTitle').textContent = `${MEASURE_LABEL[measure]}${data.group === 'whole' ? '' : ` by ${data.group === 'daily' ? 'day' : data.group === 'weekly' ? 'week' : 'month'}`}`;
     renderChart($('analysisChart'), {
       title: `${MEASURE_LABEL[measure]} chart`,
@@ -342,11 +331,11 @@
     });
 
     // table
-    $('analysisTable').querySelector('thead').innerHTML = '<tr><th>Period</th><th>Active tickets</th><th>Total bookings</th><th>Gross revenue</th><th>Net revenue</th></tr>';
+    $('analysisTable').querySelector('thead').innerHTML = '<tr><th>Period</th><th>Active tickets</th><th>Total bookings</th><th>Gross revenue</th><th>Net revenue</th><th>Donations</th></tr>';
     const body = rows
-      .map((r) => `<tr><td>${esc(r.label)}</td><td>${valueCell('tickets', r)}</td><td>${valueCell('bookings', r)}</td><td>${valueCell('gross', r)}</td><td>${valueCell('net', r)}</td></tr>`)
+      .map((r) => `<tr><td>${esc(r.label)}</td><td>${valueCell('tickets', r)}</td><td>${valueCell('bookings', r)}</td><td>${valueCell('gross', r)}</td><td>${valueCell('net', r)}</td><td>${valueCell('donations', r)}</td></tr>`)
       .join('');
-    const total = `<tr class="total-row"><td>Whole event total</td><td>${esc(num(t.tickets))}</td><td>${esc(num(t.bookings))}</td><td>${moneyCell(t.gross)}</td><td>${moneyCell(t.net)}</td></tr>`;
+    const total = `<tr class="total-row"><td>Whole event total</td><td>${esc(num(t.tickets))}</td><td>${esc(num(t.bookings))}</td><td>${moneyCell(t.gross)}</td><td>${moneyCell(t.net)}</td><td>${moneyCell(t.donations)}</td></tr>`;
     $('analysisTable').querySelector('tbody').innerHTML = body + (data.group === 'whole' ? '' : total);
     $('analysisResults').style.display = '';
   }
@@ -444,6 +433,68 @@
     $('analysisResults').style.display = '';
   }
 
+  // ---------- all years ----------
+  async function loadYears() {
+    const id = ++state.req.years;
+    if (setupEmpty()) return showSetup('analysisStatus', 'analysisResults');
+    showAnalysisLoading('years');
+    try {
+      const q = scopeQuery();
+      q.set('mode', $('yearsMode').value);
+      const data = await getJson(`/api/analysis/years?${q}`);
+      if (id !== state.req.years || state.mode !== 'years') return;
+      renderYears(data);
+    } catch (err) {
+      if (id !== state.req.years) return;
+      $('analysisResults').style.display = 'none';
+      setStatus('analysisStatus', 'error', `Could not load the yearly comparison: ${err.message}`, loadYears);
+    }
+  }
+
+  function renderYears(data) {
+    clearStatus('analysisStatus');
+    const currency = currencySelector($('yearsCurrency'), data.currencies);
+    const measure = $('yearsMeasure').value;
+    const selected = data.rows.find((r) => r.selected);
+
+    const note = [];
+    if (data.mode === 'equivalent') {
+      note.push(
+        data.equivalent
+          ? `Showing sales made at least ${data.cutoff} day${data.cutoff === 1 ? '' : 's'} before each year's performance: the same point in the sales cycle as ${esc(selected?.label || 'the selected year')} is at today.`
+          : `${esc(selected?.label || 'The selected year')}'s performance has already happened, so there is no equivalent date. All sales are shown.`
+      );
+    }
+    const partial = data.rows.filter((r) => r.incomplete);
+    if (partial.length) note.push(`The download is not complete for ${partial.map((r) => esc(r.label)).join(', ')}; those bars may be understated.`);
+    const excluded = data.rows.reduce((n, r) => n + r.excluded, 0);
+    if (data.mode === 'equivalent' && excluded) note.push(`${excluded} booking${excluded === 1 ? ' was' : 's were'} left out because the creation date or performance date is missing.`);
+    note.push('Revenue excludes donations, which are shown separately. Years are the year of the performance, earliest to most recent.');
+    notices(note);
+
+    $('analysisTotals').innerHTML = '';
+    $('analysisResults').style.display = '';
+    const fmt = MONEY_MEASURES.includes(measure) ? (v) => money(currency, v) : (v) => num(v);
+    $('analysisChartTitle').textContent = `${MEASURE_LABEL[measure]} by year${data.mode === 'equivalent' && data.equivalent ? ' (to the equivalent date)' : ''}`;
+    const values = data.rows.map((r) => numericValue(measure, { coverage: 'complete', [measure]: r[measure] }, currency));
+    renderChart($('analysisChart'), {
+      title: `${MEASURE_LABEL[measure]} by year`,
+      labels: data.rows.map((r) => r.label),
+      forceBar: true,
+      series: [{ name: MEASURE_LABEL[measure], color: COLOR.comparison, colors: data.rows.map((r) => (r.selected ? COLOR.selected : COLOR.comparison)), values }],
+      legend: [{ name: 'Selected year', color: COLOR.selected }, { name: 'Other years', color: COLOR.comparison }],
+      format: fmt,
+    });
+
+    $('analysisTable').querySelector('thead').innerHTML = '<tr><th>Year</th><th>Active tickets</th><th>Total bookings</th><th>Gross revenue</th><th>Net revenue</th><th>Donations</th></tr>';
+    $('analysisTable').querySelector('tbody').innerHTML = data.rows
+      .map((r) => {
+        const tag = r.incomplete ? ' <span class="partial-tag" title="The download of this year is incomplete">partial</span>' : '';
+        return `<tr${r.selected ? ' class="row-selected"' : ''}><td>${esc(r.label)}${tag}</td><td>${esc(num(r.tickets))}</td><td>${esc(num(r.bookings))}</td><td>${moneyCell(r.gross, currency)}</td><td>${moneyCell(r.net, currency)}</td><td>${moneyCell(r.donations, currency)}</td></tr>`;
+      })
+      .join('');
+  }
+
   // ---------- discount codes ----------
   async function loadDiscounts() {
     const id = ++state.req.discounts;
@@ -456,7 +507,6 @@
       const q = new URLSearchParams({ scope });
       if (scope === 'event') {
         q.set('eventId', state.eventId);
-        if (state.performanceId) q.set('performanceId', state.performanceId);
       }
       const data = await getJson(`/api/analysis/discounts?${q}`);
       if (id !== state.req.discounts) return;
@@ -491,7 +541,7 @@
   // ---------- wiring ----------
   function reload() {
     if (state.visible === 'discounts') return loadDiscounts();
-    return state.mode === 'sales' ? loadSales() : loadCompare();
+    return state.mode === 'sales' ? loadSales() : state.mode === 'compare' ? loadCompare() : loadYears();
   }
 
   function setMode(mode) {
@@ -503,16 +553,12 @@
     });
     $('analysisSalesControls').style.display = mode === 'sales' ? '' : 'none';
     $('analysisCompareControls').style.display = mode === 'compare' ? '' : 'none';
+    $('analysisYearsControls').style.display = mode === 'years' ? '' : 'none';
     reload();
   }
 
-  function onScopeChange(source) {
-    if (source === 'event') {
-      state.eventId = $(state.visible === 'discounts' ? 'discountEvent' : 'analysisEvent').value;
-      state.performanceId = '';
-    } else {
-      state.performanceId = $(state.visible === 'discounts' ? 'discountPerformance' : 'analysisPerformance').value;
-    }
+  function onScopeChange() {
+    state.eventId = $(state.visible === 'discounts' ? 'discountEvent' : 'analysisEvent').value;
     syncSelectors();
     reload();
   }
@@ -520,7 +566,7 @@
   function daysUntilPerformance() {
     const ev = (state.options?.events || []).find((e) => e.id === state.eventId);
     if (!ev) return null;
-    const perfs = ev.performances.filter((p) => p.starts_at && (!state.performanceId || p.id === state.performanceId));
+    const perfs = ev.performances.filter((p) => p.starts_at);
     if (!perfs.length) return null;
     const dayNum = (d) => {
       const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).filter((x) => x.type !== 'literal').map((x) => [x.type, Number(x.value)]));
@@ -532,14 +578,13 @@
   }
 
   function init() {
-    $('analysisEvent').addEventListener('change', () => onScopeChange('event'));
-    $('discountEvent').addEventListener('change', () => onScopeChange('event'));
-    $('analysisPerformance').addEventListener('change', () => onScopeChange('performance'));
-    $('discountPerformance').addEventListener('change', () => onScopeChange('performance'));
+    $('analysisEvent').addEventListener('change', onScopeChange);
+    $('discountEvent').addEventListener('change', onScopeChange);
     document.querySelectorAll('.mode-btn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 
     // data-affecting controls reload; presentation-only controls (measure, currency) re-render from a fresh request
     ['salesGroup', 'salesMeasure', 'salesCurrency'].forEach((id) => $(id).addEventListener('change', loadSales));
+    ['yearsMeasure', 'yearsMode', 'yearsCurrency'].forEach((id) => $(id).addEventListener('change', loadYears));
     ['compareEvent', 'compareGroup', 'compareMeasure', 'compareCurrency', 'compareCutoff', 'compareAverage'].forEach((id) => $(id).addEventListener('change', loadCompare));
     $('compareCutoffToday').addEventListener('click', () => {
       const d = daysUntilPerformance();

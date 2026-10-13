@@ -106,5 +106,5 @@ export function salesOverTime({ performances, bookings }, group = 'whole') {
 }
 
 function nulls() {
-  return { tickets: null, bookings: null, gross: null, net: null };
+  return { tickets: null, bookings: null, gross: null, net: null, donations: null };
 }

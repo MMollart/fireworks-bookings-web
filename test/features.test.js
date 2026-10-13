@@ -7,13 +7,15 @@ import { TicketSourceClient } from '../src/ticketsource/client.js';
 import { refreshEvents, listEventSummaries } from '../src/ticketsource/events.js';
 import { syncEventStep } from '../src/ticketsource/engine.js';
 import { refreshUnsettled } from '../src/ticketsource/auto.js';
-import { withYear } from '../src/lib/eventName.js';
+import { eventLabel } from '../src/lib/eventName.js';
 import { getDashboardSummary, getTicketTypeBreakdown, getDiscountCodeReport, listEventTotals } from '../src/domain/reports.js';
 import { listCustomers, reindexCustomers, upsertCustomer } from '../src/domain/customers.js';
 import { listBookings } from '../src/domain/bookings.js';
 import { listEvents } from '../src/domain/events.js';
 import { listTicketTypes, saveTicketType, deleteTicketType, suggestCategory, typeKey } from '../src/domain/ticketTypes.js';
-import { loadScopeOptions } from '../src/analysis/data.js';
+import { loadScopeOptions, loadBookings } from '../src/analysis/data.js';
+import { yearlyTotals } from '../src/analysis/years.js';
+import { donationTotals, listDonations } from '../src/domain/donations.js';
 
 const NOW = Date.parse('2026-11-20T12:00:00Z');
 const DAY = 86_400_000;
@@ -55,13 +57,12 @@ describe('Event names, dashboard, reports, dictionary, search, auto refresh', ()
     await syncAll('evt-2025');
   });
 
-  test('every event name shows the year of its performance', async () => {
-    assert.equal(withYear('Lydiard Fireworks & Bonfire Spectacular', '2026-11-07T19:00:00+00:00'), '2026 Lydiard Fireworks & Bonfire Spectacular');
-    assert.equal(withYear('2026 Lydiard Fireworks', '2026-11-07T19:00:00+00:00'), '2026 Lydiard Fireworks'); // not doubled
-    assert.equal(withYear('Lydiard', null), 'Lydiard');
+  test('events are labelled by the year of their performance', async () => {
+    assert.equal(eventLabel('Lydiard Fireworks & Bonfire Spectacular', '2026-11-07T19:00:00+00:00'), '2026');
+    assert.equal(eventLabel('Lydiard', null), 'Lydiard'); // no date: fall back to the TicketSource name
 
     const names = (await listEvents(db)).map((e) => e.name);
-    assert.deepEqual(names, ['2026 Lydiard Fireworks & Bonfire Spectacular', '2025 Lydiard Fireworks & Bonfire Spectacular']); // newest first
+    assert.deepEqual(names, ['2026', '2025']); // newest first
     assert.deepEqual((await listEventSummaries(db, { settlementDays: 14, now: NOW })).map((e) => e.name).sort(), names.slice().sort());
     assert.equal((await loadScopeOptions(db)).events[0].name, names[0]);
   });
@@ -69,7 +70,7 @@ describe('Event names, dashboard, reports, dictionary, search, auto refresh', ()
   test('dashboard defaults to the latest event and can be switched', async () => {
     const latest = await getDashboardSummary(db);
     assert.equal(latest.selectedEventId, 'evt-2026');
-    assert.equal(latest.event.name, '2026 Lydiard Fireworks & Bonfire Spectacular');
+    assert.equal(latest.event.name, '2026');
     assert.equal(latest.bookings.confirmed, 4);
     assert.equal(latest.tickets.tickets_sold, 8);
     assert.equal(latest.customers.total, 4);
@@ -198,6 +199,69 @@ describe('Event names, dashboard, reports, dictionary, search, auto refresh', ()
     assert.equal(one.rows.length, 1);
     assert.equal(one.rows[0].uses, 4);
     assert.equal(one.rows[0].total, 8);
+  });
+
+  const addDonation = async (n, { gift = true, amount = 5 } = {}) => {
+    const tickets = { line_type: 'TICKETS', payment_method: 'TS', is_refund: false, amount: { gross: 20, fee: 0, fee_vat: 0, net: 20, discounts: {} }, created_at: '2026-10-01T10:00:00+00:00' };
+    const donation = { line_type: 'DONATION', payment_method: 'TS', is_refund: false, amount: { gross: amount, fee: 0, fee_vat: 0, net: amount, discounts: {} }, donation: { gift_aid: gift }, created_at: '2026-10-01T10:00:00+00:00' };
+    ts.addBooking('dat-2026', n, { lines: [tickets, donation], updated: '2026-11-20T11:00:00+00:00' });
+    await syncAll('evt-2026');
+  };
+
+  test('donations are shown separately from ticket revenue', async () => {
+    const before = await getDashboardSummary(db);
+    await addDonation(5, { gift: true, amount: 5 });
+    await addDonation(6, { gift: false, amount: 10 });
+
+    const dash = await getDashboardSummary(db);
+    assert.deepEqual([dash.donations.total, dash.donations.bookings, dash.donations.gift_aid_bookings, dash.donations.gift_aid_total], [15, 2, 1, 5]);
+    assert.equal(dash.financials.gross_revenue - before.financials.gross_revenue, 40); // 2 x 20 of tickets, donations excluded
+
+    const items = await listDonations(db, { eventId: 'evt-2026' });
+    assert.deepEqual(items.map((d) => [d.amount, d.gift_aid, d.event]).sort(), [[10, false, '2026'], [5, true, '2026']]);
+    assert.equal((await donationTotals(db))[0].label, '2026');
+    assert.equal((await donationTotals(db, { eventId: 'evt-2025' })).length, 0);
+
+    const booking = (await listBookings(db, { search: 'REF005' }))[0];
+    assert.equal(booking.donation, 5);
+    assert.equal((await listBookings(db, { search: 'REF001' }))[0].donation, 0);
+
+    // analysis revenue excludes donations, which have their own figure
+    const out = (await import('../src/analysis/sales.js')).salesOverTime(await loadBookings(db, { eventId: 'evt-2026' }), 'whole');
+    assert.equal(out.totals.donations.GBP, 15);
+    assert.equal(out.totals.gross.GBP, 6 * 20);
+  });
+
+  test('tickets carry no assumed price', async () => {
+    assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM tickets WHERE price <> 0').get()).n, 0);
+    const tiers = await getTicketTypeBreakdown(db);
+    assert.ok(tiers.every((t) => !('total_revenue' in t)));
+  });
+
+  test('all years side by side, earliest first, optionally to the equivalent date', async () => {
+    const events = [];
+    for (const id of ['evt-2026', 'evt-2025']) {
+      const e = (await loadScopeOptions(db)).events.find((x) => x.id === id);
+      events.push({ id, label: e.name, firstStart: e.first_start, data: await loadBookings(db, { eventId: id }) });
+    }
+    const all = yearlyTotals({ events, selectedId: 'evt-2026', mode: 'all', now: Date.parse('2026-10-31T12:00:00Z') });
+    assert.deepEqual(all.rows.map((r) => r.label), ['2025', '2026']);
+    assert.deepEqual(all.rows.map((r) => [r.bookings, r.tickets]), [[3, 9], [4, 8]]);
+    assert.equal(all.cutoff, null);
+    assert.equal(all.rows[1].selected, true);
+
+    // 7 Nov performance, today 31 Oct -> sales made at least 7 days before each performance; fake bookings are created 30 Sep / 1 Oct
+    const eq = yearlyTotals({ events, selectedId: 'evt-2026', mode: 'equivalent', now: Date.parse('2026-10-31T12:00:00Z') });
+    assert.equal(eq.cutoff, 7);
+    assert.equal(eq.equivalent, true);
+    const bookingsBy = Object.fromEntries(eq.rows.map((r) => [r.label, r.bookings]));
+    assert.equal(bookingsBy['2026'], 4); // created ~38 days before 7 Nov
+    assert.equal(bookingsBy['2025'], 0); // created in 2026 for a 2025 show: after the performance, so not "equivalent"
+
+    // once the selected performance has passed there is no equivalent point: all sales
+    const past = yearlyTotals({ events, selectedId: 'evt-2026', mode: 'equivalent', now: Date.parse('2026-12-01T12:00:00Z') });
+    assert.equal(past.equivalent, false);
+    assert.equal(past.cutoff, null);
   });
 
   test('event totals list newest first', async () => {

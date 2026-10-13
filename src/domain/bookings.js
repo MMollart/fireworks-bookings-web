@@ -66,7 +66,9 @@ const LIST_SELECT = `
   SELECT b.*, e.name AS event_name,
          c.name_encrypted, c.email_encrypted, c.phone_encrypted, c.postcode_encrypted,
          d.code AS discount_code,
-         (SELECT COUNT(*) FROM tickets t WHERE t.booking_id = b.id) AS ticket_count
+         (SELECT COUNT(*) FROM tickets t WHERE t.booking_id = b.id) AS ticket_count,
+         COALESCE((SELECT SUM(CASE WHEN x.is_refund = 1 THEN -ABS(x.gross) ELSE x.gross END) FROM booking_transactions x
+                   WHERE x.booking_id = b.id AND x.line_type = 'DONATION'), 0) AS donation
   FROM bookings b
   JOIN events e ON b.event_id = e.id
   JOIN customers c ON b.customer_id = c.id
@@ -93,6 +95,7 @@ async function toBooking(row) {
     total_price: row.total_price,
     payment_method: row.payment_method,
     ticket_count: row.ticket_count,
+    donation: row.donation,
     created_at: row.created_at,
   };
 }
