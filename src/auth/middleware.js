@@ -81,8 +81,9 @@ export function requireAuth(arg1, arg2, arg3) {
     const req = arg1;
     const res = arg2;
     const next = arg3;
+    const url = req.originalUrl || req.baseUrl || req.path;
     if (!req.user) {
-      if (req.path.startsWith('/api/')) {
+      if (url.startsWith('/api/')) {
         return res.status(401).json({
           error: 'Unauthorized',
           message: 'Authentication required',
@@ -113,8 +114,9 @@ export function requireAuth(arg1, arg2, arg3) {
       }
     }
 
+    const url = req.originalUrl || req.baseUrl || req.path;
     if (!req.user) {
-      if (req.path.startsWith('/api/')) {
+      if (url.startsWith('/api/')) {
         return res.status(401).json({
           error: 'Unauthorized',
           message: 'Authentication required',

@@ -11,13 +11,13 @@ export function upsertCustomer(db, data) {
   const now = new Date().toISOString();
 
   // Check if customer already exists by blind index
-  const existing = db.prepare('SELECT id FROM customers WHERE email_hash = ?').get(emailHash);
+  const existing = db.prepare('SELECT id FROM customers WHERE email_blind_index = ? OR email_hash = ?').get(emailHash, emailHash);
 
   if (existing) {
     const updateStmt = db.prepare(`
       UPDATE customers
       SET name_encrypted = ?, email_encrypted = ?, phone_encrypted = ?, postcode_encrypted = ?,
-          postcode_hash = ?, updated_at = ?
+          email_blind_index = ?, email_hash = ?, postcode_hash = ?, updated_at = ?
       WHERE id = ?
     `);
 
@@ -26,6 +26,8 @@ export function upsertCustomer(db, data) {
       encrypt(data.email),
       encrypt(data.phone || ''),
       encrypt(data.postcode || ''),
+      emailHash,
+      emailHash,
       postcodeHash,
       now,
       existing.id
@@ -37,8 +39,8 @@ export function upsertCustomer(db, data) {
   // Create new customer
   const id = data.id || `cust_${crypto.randomBytes(6).toString('hex')}`;
   const insertStmt = db.prepare(`
-    INSERT INTO customers (id, name_encrypted, email_encrypted, phone_encrypted, postcode_encrypted, email_hash, postcode_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO customers (id, name_encrypted, email_encrypted, phone_encrypted, postcode_encrypted, email_blind_index, email_hash, postcode_hash, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   insertStmt.run(
@@ -47,6 +49,7 @@ export function upsertCustomer(db, data) {
     encrypt(data.email),
     encrypt(data.phone || ''),
     encrypt(data.postcode || ''),
+    emailHash,
     emailHash,
     postcodeHash,
     now,
@@ -74,10 +77,23 @@ export function getCustomerById(db, id) {
 export function findCustomerByEmail(db, email) {
   if (!email) return null;
   const emailHash = blindIndex(email);
-  const row = db.prepare('SELECT * FROM customers WHERE email_hash = ?').get(emailHash);
+  const row = db.prepare('SELECT id FROM customers WHERE email_blind_index = ? OR email_hash = ?').get(emailHash, emailHash);
   if (!row) return null;
   return getCustomerById(db, row.id);
 }
+
+export function searchCustomers(db, query) {
+  if (!query) return [];
+  const trimmed = query.trim();
+  const bIndex = blindIndex(trimmed);
+  const byIndex = db.prepare('SELECT id FROM customers WHERE email_blind_index = ? OR email_hash = ?').all(bIndex, bIndex);
+  if (byIndex.length > 0) {
+    return byIndex.map((row) => getCustomerById(db, row.id));
+  }
+  return listCustomers(db, { search: trimmed });
+}
+
+export const createOrUpdateCustomer = upsertCustomer;
 
 export function listCustomers(db, options = {}) {
   const limit = options.limit ? parseInt(options.limit, 10) : 100;
@@ -121,7 +137,9 @@ export function listCustomers(db, options = {}) {
 
 export default {
   upsertCustomer,
+  createOrUpdateCustomer,
   getCustomerById,
   findCustomerByEmail,
   listCustomers,
+  searchCustomers,
 };

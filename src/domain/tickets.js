@@ -56,10 +56,16 @@ export function checkInTicket(db, barcodeOrId, options = {}) {
     return { success: false, error: `Cannot check in ticket with ${ticket.booking_status} booking status` };
   }
   if (ticket.is_checked_in) {
+    const t = {
+      ...ticket,
+      checked_in: 1,
+      already_checked_in: true,
+    };
     return {
       success: false,
       error: 'Ticket already checked in',
-      ticket,
+      already_checked_in: true,
+      ticket: t,
       checked_in_at: ticket.checked_in_at,
     };
   }
@@ -71,7 +77,10 @@ export function checkInTicket(db, barcodeOrId, options = {}) {
     WHERE id = ?
   `).run(now, ticket.id);
 
-  const updatedTicket = getTicketById(db, ticket.id);
+  const updatedTicket = {
+    ...getTicketById(db, ticket.id),
+    checked_in: 1,
+  };
   return {
     success: true,
     ticket: updatedTicket,

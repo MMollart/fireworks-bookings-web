@@ -13,7 +13,7 @@ export function createReportRoutes(db) {
   // GET /api/reports/dashboard
   router.get('/dashboard', (req, res) => {
     const summary = getDashboardSummary(db);
-    return res.json({ summary });
+    return res.json({ ...summary, summary });
   });
 
   // GET /api/reports/velocity
@@ -42,7 +42,7 @@ export function createReportRoutes(db) {
     const csvData = exportBookingsCsv(db, { eventId, status });
     const filename = `fireworks-bookings-${new Date().toISOString().slice(0, 10)}.csv`;
 
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(csvData);
   });

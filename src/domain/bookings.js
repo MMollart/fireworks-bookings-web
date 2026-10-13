@@ -38,7 +38,8 @@ export function createBooking(db, data) {
     const discount = getDiscountByCode(db, rawDiscountCode);
     if (discount && discount.is_active) {
       discountCodeId = discount.id;
-      discountAmount = calculateDiscount(discount, subtotal);
+      const calc = calculateDiscount(discount, subtotal);
+      discountAmount = typeof calc === 'number' ? calc : (calc?.discountAmount ?? 0);
     }
   }
 
@@ -91,15 +92,21 @@ export function createBooking(db, data) {
   }
 
   // If confirmed and had discount, record usage
-  if (status === 'confirmed' && discountCodeId) {
-    recordDiscountUsage(db, discountCodeId, discountAmount);
+  if (status === 'confirmed' && (discountCodeId || rawDiscountCode)) {
+    recordDiscountUsage(db, discountCodeId || rawDiscountCode, discountAmount, totalPrice);
   }
 
   const result = getBookingById(db, bookingId);
-  // Also provide booking property alias for backward compatibility with scripts
-  result.booking = result;
   result.booking_reference = result.reference;
+  result.subtotal_amount = result.subtotal;
   result.total_amount = result.total_price;
+  result.tickets = createdTickets;
+  result.booking = {
+    ...result,
+    booking_reference: result.reference,
+    subtotal_amount: result.subtotal,
+    total_amount: result.total_price,
+  };
   return result;
 }
 
@@ -124,6 +131,7 @@ export function getBookingById(db, id) {
   return {
     id: row.id,
     reference: row.reference,
+    booking_reference: row.reference,
     event_id: row.event_id,
     event_name: row.event_name,
     event_date: row.event_date,
@@ -139,9 +147,11 @@ export function getBookingById(db, id) {
     booking_date: row.booking_date,
     status: row.status,
     subtotal: row.subtotal,
+    subtotal_amount: row.subtotal,
     discount_code: row.discount_code,
     discount_amount: row.discount_amount,
     total_price: row.total_price,
+    total_amount: row.total_price,
     payment_method: row.payment_method,
     payment_reference: row.payment_reference,
     notes: row.notes,

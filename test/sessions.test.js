@@ -60,7 +60,7 @@ describe('Session Management & Storage', () => {
     const session = createSession(db, testUser.id);
 
     // Force expiration date in the past
-    db.prepare('UPDATE sessions SET expires_at = datetime("now", "-1 hour") WHERE user_id = ?')
+    db.prepare("UPDATE sessions SET expires_at = datetime('now', '-1 hour') WHERE user_id = ?")
       .run(testUser.id);
 
     assert.equal(getSession(db, session.token), null);

@@ -5,18 +5,18 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL COLLATE NOCASE,
   password_hash TEXT NOT NULL,
-  salt TEXT NOT NULL,
+  salt TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'viewer', 'operator')),
   is_active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   last_login_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   expires_at TEXT NOT NULL,
   ip_address TEXT,
   user_agent TEXT
@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS events (
   capacity INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'sold_out', 'completed', 'cancelled')),
   description TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE IF NOT EXISTS customers (
@@ -43,12 +43,14 @@ CREATE TABLE IF NOT EXISTS customers (
   email_encrypted TEXT NOT NULL,
   phone_encrypted TEXT,
   postcode_encrypted TEXT,
-  email_hash TEXT NOT NULL,
+  email_blind_index TEXT NOT NULL DEFAULT '',
+  email_hash TEXT NOT NULL DEFAULT '',
   postcode_hash TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
+CREATE INDEX IF NOT EXISTS idx_customers_email_blind_index ON customers(email_blind_index);
 CREATE INDEX IF NOT EXISTS idx_customers_email_hash ON customers(email_hash);
 
 CREATE TABLE IF NOT EXISTS discount_codes (
@@ -58,9 +60,12 @@ CREATE TABLE IF NOT EXISTS discount_codes (
   discount_type TEXT NOT NULL DEFAULT 'fixed' CHECK (discount_type IN ('fixed', 'percent')),
   discount_value REAL NOT NULL DEFAULT 0,
   usage_count INTEGER NOT NULL DEFAULT 0,
+  times_used INTEGER NOT NULL DEFAULT 0,
   total_discount_amount REAL NOT NULL DEFAULT 0,
+  total_savings_generated REAL NOT NULL DEFAULT 0,
+  total_revenue_associated REAL NOT NULL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE TABLE IF NOT EXISTS bookings (
@@ -77,8 +82,8 @@ CREATE TABLE IF NOT EXISTS bookings (
   payment_method TEXT,
   payment_reference TEXT,
   notes TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookings_event ON bookings(event_id);
@@ -95,7 +100,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   barcode TEXT UNIQUE,
   is_checked_in INTEGER NOT NULL DEFAULT 0,
   checked_in_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tickets_booking ON tickets(booking_id);
@@ -106,6 +111,7 @@ CREATE TABLE IF NOT EXISTS sync_checkpoints (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL DEFAULT 'ticketsource',
   cursor TEXT,
+  last_sync_cursor TEXT,
   status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'in_progress', 'completed', 'failed')),
   records_imported INTEGER NOT NULL DEFAULT 0,
   error_message TEXT,

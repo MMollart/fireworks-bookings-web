@@ -47,7 +47,9 @@ export function createAdminRoutes(db) {
       return res.status(409).json({ error: `User '${trimmedUsername}' already exists` });
     }
 
-    const { hash, salt } = hashPassword(password);
+    const passwordHash = hashPassword(password);
+    const parts = passwordHash.split(':');
+    const salt = parts[1] || '';
     const now = new Date().toISOString();
 
     const insertStmt = db.prepare(`
@@ -55,7 +57,7 @@ export function createAdminRoutes(db) {
       VALUES (?, ?, ?, ?, 1, ?, ?)
     `);
 
-    const result = insertStmt.run(trimmedUsername, hash, salt, role, now, now);
+    const result = insertStmt.run(trimmedUsername, passwordHash, salt, role, now, now);
 
     const newUser = db.prepare(`
       SELECT id, username, role, is_active, created_at, updated_at
@@ -72,10 +74,10 @@ export function createAdminRoutes(db) {
   // PATCH /api/admin/users/:id/status
   router.patch('/users/:id/status', (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const { isActive } = req.body || {};
+    const isActive = req.body?.isActive !== undefined ? req.body.isActive : req.body?.is_active;
 
     if (isActive === undefined) {
-      return res.status(400).json({ error: 'isActive boolean is required' });
+      return res.status(400).json({ error: 'isActive or is_active boolean is required' });
     }
 
     // Prevent admin from disabling their own account
@@ -104,12 +106,12 @@ export function createAdminRoutes(db) {
     });
   });
 
-  // POST /api/admin/users/:id/reset-password
-  router.post('/users/:id/reset-password', (req, res) => {
+  // POST /api/admin/users/:id/reset-password or /api/admin/users/:id/password
+  const handlePasswordReset = (req, res) => {
     const userId = parseInt(req.params.id, 10);
-    const { newPassword } = req.body || {};
+    const pwd = req.body?.password || req.body?.newPassword;
 
-    const policy = validatePasswordPolicy(newPassword);
+    const policy = validatePasswordPolicy(pwd);
     if (!policy.valid) {
       return res.status(400).json({ error: policy.error });
     }
@@ -119,14 +121,16 @@ export function createAdminRoutes(db) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { hash, salt } = hashPassword(newPassword);
+    const passwordHash = hashPassword(pwd);
+    const parts = passwordHash.split(':');
+    const salt = parts[1] || '';
     const now = new Date().toISOString();
 
     db.prepare(`
       UPDATE users
       SET password_hash = ?, salt = ?, updated_at = ?
       WHERE id = ?
-    `).run(hash, salt, now, userId);
+    `).run(passwordHash, salt, now, userId);
 
     // Invalidate existing sessions so user must log in with new password
     destroyUserSessions(db, userId);
@@ -135,7 +139,10 @@ export function createAdminRoutes(db) {
       success: true,
       message: `Password reset successfully for user '${user.username}'`,
     });
-  });
+  };
+
+  router.post('/users/:id/reset-password', handlePasswordReset);
+  router.post('/users/:id/password', handlePasswordReset);
 
   return router;
 }

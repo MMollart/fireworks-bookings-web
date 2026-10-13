@@ -27,15 +27,17 @@ const db = getDatabase();
 
 try {
   const existing = db.prepare('SELECT id, username FROM users WHERE username = ?').get(username);
-  const { hash, salt } = hashPassword(password);
+  const passwordHash = hashPassword(password);
+  const parts = passwordHash.split(':');
+  const salt = parts[1] || '';
 
   if (existing) {
     db.prepare('UPDATE users SET password_hash = ?, salt = ?, role = "admin", is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(hash, salt, existing.id);
+      .run(passwordHash, salt, existing.id);
     console.log(`✅ Updated existing user "${username}" to role "admin" with new password.`);
   } else {
     db.prepare('INSERT INTO users (username, password_hash, salt, role, is_active) VALUES (?, ?, ?, "admin", 1)')
-      .run(username, hash, salt);
+      .run(username, passwordHash, salt);
     console.log(`✅ Admin user "${username}" created successfully.`);
   }
 } catch (err) {

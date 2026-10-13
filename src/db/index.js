@@ -50,14 +50,16 @@ export function initDatabase(db) {
   const userCount = userCountStmt.get();
 
   if (userCount.count === 0) {
-    const { hash, salt } = hashPassword(config.adminInitialPassword);
+    const passwordHash = hashPassword(config.adminInitialPassword);
+    const parts = passwordHash.split(':');
+    const salt = parts[1] || '';
     const now = new Date().toISOString();
 
     const insertAdmin = db.prepare(`
       INSERT INTO users (username, password_hash, salt, role, is_active, created_at, updated_at)
       VALUES (?, ?, ?, 'admin', 1, ?, ?)
     `);
-    insertAdmin.run(config.adminInitialUsername, hash, salt, now, now);
+    insertAdmin.run(config.adminInitialUsername, passwordHash, salt, now, now);
   }
 
   return db;

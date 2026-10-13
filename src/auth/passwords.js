@@ -10,7 +10,7 @@ const SCRYPT_OPTIONS = {
 
 /**
  * Hashes a password using scrypt with a secure random salt.
- * Returns an object containing the hash hex, salt hex, and combined string.
+ * Returns formatted string 'scrypt:<salt>:<hash>' where salt is 32 hex chars and hash is 128 hex chars.
  */
 export function hashPassword(password, customSalt = null) {
   if (!password || typeof password !== 'string') {
@@ -20,11 +20,7 @@ export function hashPassword(password, customSalt = null) {
   const derivedKey = crypto.scryptSync(password, salt, KEY_LENGTH, SCRYPT_OPTIONS);
   const hash = derivedKey.toString('hex');
 
-  return {
-    hash,
-    salt,
-    combined: `scrypt:${salt}:${hash}`,
-  };
+  return `scrypt:${salt}:${hash}`;
 }
 
 /**

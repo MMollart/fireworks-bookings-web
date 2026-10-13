@@ -91,9 +91,8 @@ export function maskEmail(email) {
 
 export function maskPhone(phone) {
   if (!phone || typeof phone !== 'string') return '';
-  const digits = phone.replace(/\s+/g, '');
-  if (digits.length <= 4) return '***';
-  return '***' + digits.slice(-4);
+  if (phone.length <= 4) return '••••';
+  return '•'.repeat(phone.length - 4) + phone.slice(-4);
 }
 
 // Aliases

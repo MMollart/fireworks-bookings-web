@@ -349,6 +349,158 @@ export class TicketSourceSync {
   }
 }
 
+export function generateSimulatedBatch(limit = 5) {
+  const records = [];
+  const sampleNames = [
+    { name: 'Sarah Jenkins', email: 'sarah.j@example.co.uk', phone: '07700 900123', postcode: 'OX1 2AB' },
+    { name: 'David Thompson', email: 'd.thompson@example.com', phone: '07700 900456', postcode: 'OX2 8RT' },
+    { name: 'Emma Watson', email: 'emma.w@example.org', phone: '07700 900789', postcode: 'OX4 1XZ' },
+    { name: 'James Miller', email: 'j.miller@example.co.uk', phone: '07700 900321', postcode: 'OX3 5QW' },
+    { name: 'Claire Davies', email: 'claire.d@example.com', phone: '07700 900654', postcode: 'OX5 2LK' },
+  ];
+
+  for (let i = 0; i < limit; i++) {
+    const person = sampleNames[i % sampleNames.length];
+    const orderRef = `TS-SIM-${1000 + i}`;
+    records.push({
+      reference: orderRef,
+      customer: {
+        name: person.name,
+        email: `${person.email.split('@')[0]}+${i}@${person.email.split('@')[1]}`,
+        phone: person.phone,
+        postcode: person.postcode,
+      },
+      tickets: [
+        { type: 'Standard', ticket_type: 'Standard', price: 10.00 },
+        { type: 'Child', ticket_type: 'Child', price: 5.00 },
+      ],
+      subtotal: 15.00,
+      discount: 0,
+      total: 15.00,
+      status: 'confirmed',
+      payment_method: 'ticketsource_online',
+    });
+  }
+  return records;
+}
+
+export function getSyncStatus(db) {
+  const row = db.prepare('SELECT * FROM sync_checkpoints ORDER BY id DESC LIMIT 1').get();
+  if (!row) {
+    return { checkpoint: null, status: 'idle' };
+  }
+  return {
+    status: row.status,
+    checkpoint: {
+      ...row,
+      last_sync_cursor: row.last_sync_cursor || row.cursor,
+    },
+  };
+}
+
+export async function runSync(db, options = {}) {
+  const batch = options.customBatch || generateSimulatedBatch(options.batchSize || 10);
+  const now = new Date().toISOString();
+
+  // Create checkpoint
+  const insertStmt = db.prepare(`
+    INSERT INTO sync_checkpoints (source, cursor, last_sync_cursor, status, records_imported, started_at)
+    VALUES ('ticketsource', NULL, NULL, 'in_progress', 0, ?)
+  `);
+  const res = insertStmt.run(now);
+  const checkpointId = res.lastInsertRowid;
+
+  // Find or create default event
+  let event = db.prepare('SELECT id FROM events LIMIT 1').get();
+  if (!event) {
+    event = createEvent(db, {
+      name: 'Default Fireworks Night',
+      event_date: '2026-11-05 19:30:00',
+      capacity: 1000,
+    });
+  }
+
+  let imported = 0;
+  for (const order of batch) {
+    const existing = db.prepare('SELECT id FROM bookings WHERE reference = ?').get(order.reference);
+    if (!existing) {
+      createBooking(db, {
+        event_id: order.eventId || order.event_id || event.id,
+        reference: order.reference,
+        customer: order.customer,
+        tickets: (order.tickets || []).map((t) => ({
+          ticket_type: t.ticket_type || t.type || t.ticketType || 'Standard',
+          price: t.price || 0,
+        })),
+        payment_method: order.payment_method || 'ticketsource',
+        status: order.status || 'confirmed',
+      });
+    }
+    imported++;
+  }
+
+  const cursor = `ts_cursor_${Date.now()}`;
+  const completedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE sync_checkpoints
+    SET status = 'completed', records_imported = ?, cursor = ?, last_sync_cursor = ?, completed_at = ?
+    WHERE id = ?
+  `).run(imported, cursor, cursor, completedAt, checkpointId);
+
+  return {
+    success: true,
+    imported,
+    errors: 0,
+    checkpointId,
+  };
+}
+
+export async function ingestWebhookEvent(db, webhookPayload) {
+  const data = webhookPayload?.data || webhookPayload?.order || webhookPayload;
+  if (!data || !data.reference) {
+    throw new Error('Invalid webhook payload: reference required');
+  }
+
+  const existing = db.prepare('SELECT id FROM bookings WHERE reference = ?').get(data.reference);
+  if (existing) {
+    return {
+      status: 'already_processed',
+      reference: data.reference,
+    };
+  }
+
+  let event = db.prepare('SELECT id FROM events LIMIT 1').get();
+  if (!event) {
+    event = createEvent(db, {
+      name: 'Default Fireworks Night',
+      event_date: '2026-11-05 19:30:00',
+      capacity: 1000,
+    });
+  }
+
+  const booking = createBooking(db, {
+    event_id: data.eventId || data.event_id || event.id,
+    reference: data.reference,
+    customer: data.customer,
+    tickets: (data.tickets || []).map((t) => ({
+      ticket_type: t.ticket_type || t.type || t.ticketType || 'Standard',
+      price: t.price || 0,
+    })),
+    payment_method: data.payment_method,
+    status: data.status || 'confirmed',
+  });
+
+  return {
+    status: 'created',
+    reference: data.reference,
+    booking,
+  };
+}
+
 export default {
   TicketSourceSync,
+  generateSimulatedBatch,
+  getSyncStatus,
+  runSync,
+  ingestWebhookEvent,
 };

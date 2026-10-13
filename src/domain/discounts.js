@@ -17,11 +17,29 @@ export function listDiscounts(db) {
 export function getDiscountByCode(db, rawCode) {
   if (!rawCode) return null;
   const code = String(rawCode).trim().toUpperCase();
-  return db.prepare('SELECT * FROM discount_codes WHERE UPPER(code) = ?').get(code);
+  const row = db.prepare('SELECT * FROM discount_codes WHERE UPPER(code) = ?').get(code);
+  if (!row) return null;
+  return {
+    ...row,
+    times_used: row.times_used ?? row.usage_count,
+    total_savings_generated: row.total_savings_generated ?? row.total_discount_amount,
+    total_revenue_associated: row.total_revenue_associated ?? 0,
+  };
 }
 
 export function getDiscountById(db, id) {
-  return db.prepare('SELECT * FROM discount_codes WHERE id = ?').get(id);
+  const row = db.prepare('SELECT * FROM discount_codes WHERE id = ?').get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    times_used: row.times_used ?? row.usage_count,
+    total_savings_generated: row.total_savings_generated ?? row.total_discount_amount,
+    total_revenue_associated: row.total_revenue_associated ?? 0,
+  };
+}
+
+export function getDiscountCode(db, codeOrId) {
+  return getDiscountByCode(db, codeOrId) || getDiscountById(db, codeOrId);
 }
 
 export function createDiscount(db, data) {
@@ -35,8 +53,12 @@ export function createDiscount(db, data) {
   const now = new Date().toISOString();
 
   const stmt = db.prepare(`
-    INSERT INTO discount_codes (id, code, description, discount_type, discount_value, usage_count, total_discount_amount, is_active, created_at)
-    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+    INSERT INTO discount_codes (
+      id, code, description, discount_type, discount_value,
+      usage_count, times_used, total_discount_amount, total_savings_generated, total_revenue_associated,
+      is_active, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)
   `);
 
   stmt.run(
@@ -54,24 +76,37 @@ export function createDiscount(db, data) {
 
 export function calculateDiscount(discount, subtotal) {
   if (!discount || !discount.is_active) {
-    return 0;
+    return { discountAmount: 0, total: subtotal };
   }
+  let discountAmount = 0;
   if (discount.discount_type === 'percent') {
     const percent = Math.min(100, Math.max(0, discount.discount_value));
-    return parseFloat(((subtotal * percent) / 100).toFixed(2));
+    discountAmount = parseFloat(((subtotal * percent) / 100).toFixed(2));
+  } else {
+    discountAmount = Math.min(subtotal, parseFloat(discount.discount_value.toFixed(2)));
   }
-  return Math.min(subtotal, parseFloat(discount.discount_value.toFixed(2)));
+  const total = Math.max(0, parseFloat((subtotal - discountAmount).toFixed(2)));
+  return {
+    discountAmount,
+    total,
+  };
 }
 
-export function recordDiscountUsage(db, discountId, discountAmount) {
-  if (!discountId) return;
+export function recordDiscountUsage(db, codeOrId, savingsAmount = 0, revenueAssociated = 0) {
+  if (!codeOrId) return;
+  const savings = parseFloat(savingsAmount || 0);
+  const revenue = parseFloat(revenueAssociated || 0);
+
   const stmt = db.prepare(`
     UPDATE discount_codes
     SET usage_count = usage_count + 1,
-        total_discount_amount = total_discount_amount + ?
-    WHERE id = ?
+        times_used = times_used + 1,
+        total_discount_amount = total_discount_amount + ?,
+        total_savings_generated = total_savings_generated + ?,
+        total_revenue_associated = total_revenue_associated + ?
+    WHERE id = ? OR UPPER(code) = UPPER(?)
   `);
-  stmt.run(parseFloat(discountAmount || 0), discountId);
+  stmt.run(savings, savings, revenue, codeOrId, codeOrId);
 }
 
 export const createDiscountCode = createDiscount;
@@ -82,6 +117,7 @@ export default {
   listDiscountCodes,
   getDiscountByCode,
   getDiscountById,
+  getDiscountCode,
   createDiscount,
   createDiscountCode,
   calculateDiscount,

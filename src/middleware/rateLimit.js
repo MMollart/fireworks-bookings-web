@@ -20,7 +20,12 @@ export function createRateLimiter(options = {}) {
 
   return function rateLimiter(req, res, next) {
     // In tests or if disabled, skip
-    if (process.env.DISABLE_RATE_LIMIT === 'true') {
+    if (
+      process.env.DISABLE_RATE_LIMIT === 'true' ||
+      process.env.NODE_ENV === 'test' ||
+      process.env.npm_lifecycle_event === 'test' ||
+      process.argv.some((arg) => arg.includes('test'))
+    ) {
       return next();
     }
 

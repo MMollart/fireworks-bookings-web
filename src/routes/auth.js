@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { verifyPassword } from '../auth/passwords.js';
 import { createSession, destroySession, getSessionCookieOptions } from '../auth/sessions.js';
 import { loginRateLimiter } from '../middleware/rateLimit.js';
+import { requireAuth } from '../auth/middleware.js';
 
 export function createAuthRoutes(db) {
   const router = express.Router();
@@ -22,16 +23,16 @@ export function createAuthRoutes(db) {
     `).get(username.trim());
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      return res.status(401).json({ error: 'Invalid username or password', message: 'Invalid username or password' });
     }
 
     if (!user.is_active) {
-      return res.status(403).json({ error: 'Account is disabled. Please contact an administrator.' });
+      return res.status(403).json({ error: 'Account is disabled. Please contact an administrator.', message: 'Account is disabled' });
     }
 
     const isValid = verifyPassword(password, user.password_hash, user.salt);
     if (!isValid) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      return res.status(401).json({ error: 'Invalid username or password', message: 'Invalid username or password' });
     }
 
     // Update last_login_at
@@ -68,7 +69,7 @@ export function createAuthRoutes(db) {
   });
 
   // GET /api/auth/me
-  router.get('/me', (req, res) => {
+  router.get('/me', requireAuth(db), (req, res) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Not authenticated' });
     }

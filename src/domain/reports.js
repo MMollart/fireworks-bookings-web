@@ -40,6 +40,13 @@ export function getDashboardSummary(db) {
   const events = listEvents(db);
 
   return {
+    financials: {
+      gross_revenue: stats.gross_revenue,
+      total_discounts: stats.total_discounts,
+      net_revenue: parseFloat((stats.gross_revenue - stats.total_discounts).toFixed(2)),
+      confirmed_bookings: stats.confirmed_bookings || 0,
+      aov,
+    },
     revenue: {
       gross: stats.gross_revenue,
       discounts: stats.total_discounts,
@@ -56,6 +63,8 @@ export function getDashboardSummary(db) {
     tickets: {
       totalSold: ticketStats.total_tickets_sold || 0,
       checkedIn: ticketStats.checked_in_count || 0,
+      tickets_sold: ticketStats.total_tickets_sold || 0,
+      tickets_checked_in: ticketStats.checked_in_count || 0,
       checkInRate: ticketStats.total_tickets_sold > 0
         ? Math.round(((ticketStats.checked_in_count || 0) / ticketStats.total_tickets_sold) * 100)
         : 0,
@@ -131,7 +140,7 @@ export function exportBookingsCsv(db, options = {}) {
   });
 
   const headers = [
-    'Reference',
+    'Booking Reference',
     'Event',
     'Booking Date',
     'Status',

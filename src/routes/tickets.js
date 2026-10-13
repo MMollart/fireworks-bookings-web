@@ -31,24 +31,31 @@ export function createTicketRoutes(db) {
     return res.json({ ticket });
   });
 
-  // POST /api/tickets/check-in
-  router.post('/check-in', (req, res) => {
+  // POST /api/tickets/checkin and /api/tickets/check-in
+  const handleCheckIn = (req, res) => {
     if (req.user.role === 'viewer') {
       return res.status(403).json({ error: 'Permission denied. Operator or admin role required for check-in.' });
     }
 
-    const { identifier } = req.body || {};
-    if (!identifier) {
+    const { identifier, barcode } = req.body || {};
+    const code = barcode || identifier;
+    if (!code) {
       return res.status(400).json({ error: 'Ticket barcode or ID is required for check-in' });
     }
 
-    const result = checkInTicket(db, identifier);
+    const result = checkInTicket(db, code);
     if (!result.success) {
+      if (result.already_checked_in) {
+        return res.status(409).json(result);
+      }
       return res.status(400).json(result);
     }
 
     return res.json(result);
-  });
+  };
+
+  router.post('/checkin', handleCheckIn);
+  router.post('/check-in', handleCheckIn);
 
   return router;
 }
