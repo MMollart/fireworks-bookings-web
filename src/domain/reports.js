@@ -192,10 +192,46 @@ export async function exportBookingsCsv(db, options = {}) {
   return rows.join('\r\n');
 }
 
+export async function exportTransactionsCsv(db, options = {}) {
+  let sql = `
+    SELECT b.reference, e.name AS event_name, b.booking_date, t.line_index, t.line_type, t.payment_method, t.is_refund,
+           t.gross, t.fee, t.fee_vat, t.net, t.discount_automatic, t.discount_code_description, t.discount_code_amount,
+           t.created_at
+    FROM booking_transactions t
+    JOIN bookings b ON t.booking_id = b.id
+    JOIN events e ON b.event_id = e.id`;
+  const params = [];
+  if (options.eventId) {
+    sql += ' WHERE b.event_id = ?';
+    params.push(options.eventId);
+  }
+  sql += ' ORDER BY b.booking_date, b.reference, t.line_index';
+  const rows = await db.prepare(sql).all(...params);
+
+  const headers = ['Booking Reference', 'Event', 'Booking Date', 'Line', 'Type', 'Payment Method', 'Refund', 'Gross', 'Fee', 'Fee VAT', 'Net', 'Automatic Discount', 'Discount Code', 'Discount Code Amount', 'Created'];
+  const esc = (v) => {
+    if (v === null || v === undefined) return '';
+    let str = String(v);
+    if (/^[=+\-@\t\r]/.test(str) && Number.isNaN(Number(str))) str = `'${str}`;
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+  const lines = [headers.join(',')];
+  for (const r of rows) {
+    lines.push(
+      [r.reference, r.event_name, r.booking_date, r.line_index, r.line_type, r.payment_method, r.is_refund ? 'yes' : 'no',
+       r.gross, r.fee, r.fee_vat, r.net, r.discount_automatic, r.discount_code_description, r.discount_code_amount, r.created_at]
+        .map(esc)
+        .join(',')
+    );
+  }
+  return lines.join('\r\n');
+}
+
 export default {
   getDashboardSummary,
   getDailySalesVelocity,
   getDiscountCodeReport,
   getTicketTypeBreakdown,
   exportBookingsCsv,
+  exportTransactionsCsv,
 };

@@ -16,15 +16,23 @@ export const config = {
   sessionSecret: DEV_SESSION_SECRET,
   adminInitialUsername: 'admin',
   adminInitialPassword: '',
-  ticketSource: { apiKey: '', apiUrl: 'https://api.ticketsource.io', webhookSecret: '' },
+  ticketSource: {
+    apiKey: '',
+    apiUrl: 'https://api.ticketsource.io',
+    stepCalls: 40, // API calls per Worker invocation (Workers limit external subrequests per request)
+    callsPerMinute: 200, // self-imposed ceiling, TicketSource allows 240/min
+    settlementDays: 14, // an event is treated as settled this long after its last date ends
+    eventsTtlMinutes: 60,
+    customerTtlHours: 168,
+  },
 };
 
-let initialisedFor = null;
+function intVar(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 export function initConfig(env = {}) {
-  if (initialisedFor === env) return config;
-  initialisedFor = env;
-
   config.env = env.NODE_ENV || 'development';
   config.isProd = config.env === 'production';
   config.sessionTtlHours = parseInt(env.SESSION_TTL_HOURS || '24', 10);
@@ -33,7 +41,11 @@ export function initConfig(env = {}) {
   config.ticketSource = {
     apiKey: env.TICKETSOURCE_API_KEY || '',
     apiUrl: env.TICKETSOURCE_API_URL || 'https://api.ticketsource.io',
-    webhookSecret: env.TICKETSOURCE_WEBHOOK_SECRET || '',
+    stepCalls: intVar(env.TS_STEP_CALLS, 40),
+    callsPerMinute: Math.min(intVar(env.TS_CALLS_PER_MINUTE, 200), 240),
+    settlementDays: intVar(env.TS_SETTLEMENT_DAYS, 14),
+    eventsTtlMinutes: intVar(env.TS_EVENTS_TTL_MINUTES, 60),
+    customerTtlHours: intVar(env.TS_CUSTOMER_TTL_HOURS, 168),
   };
 
   const key = env.ENCRYPTION_KEY;

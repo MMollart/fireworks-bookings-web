@@ -105,7 +105,16 @@ export async function getBookingById(db, id) {
 
   if (!row) return null;
 
-  const tickets = await db.prepare('SELECT * FROM tickets WHERE booking_id = ?').all(id);
+  const ticketRows = await db.prepare('SELECT * FROM tickets WHERE booking_id = ? ORDER BY barcode').all(id);
+  const tickets = await Promise.all(
+    ticketRows.map(async ({ attendee_encrypted, ...t }) => {
+      const attendee = attendee_encrypted ? JSON.parse(await decrypt(attendee_encrypted)) : null;
+      return { ...t, attendee };
+    })
+  );
+  const transactions = await db
+    .prepare('SELECT * FROM booking_transactions WHERE booking_id = ? ORDER BY line_index')
+    .all(id);
 
   return {
     id: row.id,
@@ -137,6 +146,7 @@ export async function getBookingById(db, id) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     tickets,
+    transactions,
   };
 }
 

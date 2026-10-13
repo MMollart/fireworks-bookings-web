@@ -5,6 +5,7 @@ import {
   getDiscountCodeReport,
   getTicketTypeBreakdown,
   exportBookingsCsv,
+  exportTransactionsCsv,
 } from '../domain/reports.js';
 
 export function reportRoutes() {
@@ -29,6 +30,13 @@ export function reportRoutes() {
     const csv = await exportBookingsCsv(c.get('db'), { eventId, status });
     c.header('Content-Type', 'text/csv; charset=utf-8');
     c.header('Content-Disposition', `attachment; filename="fireworks-bookings-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return c.body(csv);
+  });
+
+  r.get('/transactions.csv', async (c) => {
+    const csv = await exportTransactionsCsv(c.get('db'), { eventId: c.req.query('eventId') });
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', `attachment; filename="fireworks-transactions-${new Date().toISOString().slice(0, 10)}.csv"`);
     return c.body(csv);
   });
 

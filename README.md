@@ -41,7 +41,17 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
 - **Schema changes** go in new numbered files under `migrations/` (never edit applied ones).
 - **Auth:** PBKDF2-SHA256 password hashes, sessions stored (hashed) in D1, `HttpOnly` cookie. Login is rate limited
   through D1. Roles: `admin`, `operator` (can write), `viewer` (read-only).
-- **TicketSource webhook:** `POST /api/sync/webhook` with header `x-webhook-secret: <TICKETSOURCE_WEBHOOK_SECRET>`.
-  Manual sync needs `TICKETSOURCE_API_KEY` (from TicketSource Settings > API) and talks to `api.ticketsource.io`: each run imports up to 10 new bookings (events -> dates -> bookings), so click *Run Sync* again while it reports more remain. Each TicketSource date becomes one event here; ticket types come from seat price categories, prices are the booking total split evenly, and barcodes are `<booking ref>-<n>` because the API does not expose TicketSource's own; without it, production refuses to sync (simulated data is dev-only).
+- **TicketSource (read-only):** the app only ever sends `GET` requests to `api.ticketsource.io`; the client refuses any other
+  method, so nothing is written back. Needs the `TICKETSOURCE_API_KEY` secret (TicketSource Settings > API).
+  - *Events tab -> TicketSource:* lists events as **unsettled / settled / archived**. TicketSource's API has no settlement flag,
+    so an event counts as settled `TS_SETTLEMENT_DAYS` (default 14) after its last date ends; admins can pin it either way.
+  - *Refresh bookings* on an event pulls its bookings, customers (encrypted), attendee details (encrypted) and transaction lines.
+    Unsettled events pull only what changed since the date's last checkpoint; settled/archived events are re-read in full.
+    *Full re-sync* ignores the checkpoint and caches.
+  - *Rate limits:* events, dates and customers are cached in D1 (`TS_EVENTS_TTL_MINUTES`, `TS_CUSTOMER_TTL_HOURS`); a shared
+    rolling-minute counter keeps calls under `TS_CALLS_PER_MINUTE` (default 200, TicketSource allows 240); a 429 pauses all syncing for
+    `Retry-After`. Each request does at most `TS_STEP_CALLS` (default 40) API calls and saves its position; the UI keeps stepping
+    until the event is done, so large events simply take a few minutes.
+  - Imported tickets get barcodes like `<booking ref>-<n>` (TicketSource's own barcodes are not exposed by the API).
 - A daily cron (`wrangler.toml`) prunes expired sessions and rate-limit rows.
 - General API rate limiting is not built in; use a Cloudflare WAF rate-limiting rule if you need it.

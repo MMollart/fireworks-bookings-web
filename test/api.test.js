@@ -2,13 +2,14 @@ import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInMemoryDatabase } from './helpers/db.js';
 import { createApp } from '../src/app.js';
+import { createFakeTicketSource } from './helpers/fakeTicketSource.js';
 import { initConfig } from '../src/config.js';
 import { resetBootstrapState } from '../src/db/index.js';
 import { hashPassword } from '../src/auth/passwords.js';
 import { createEvent } from '../src/domain/events.js';
 import { createBooking } from '../src/domain/bookings.js';
 
-const ENV = { NODE_ENV: 'test', TICKETSOURCE_WEBHOOK_SECRET: 'whsec_test' };
+const ENV = { NODE_ENV: 'test' };
 
 describe('HTTP API & Authentication Integration Tests', () => {
   let db;
@@ -74,7 +75,7 @@ describe('HTTP API & Authentication Integration Tests', () => {
     const res = await call('GET', '/api/events');
     assert.equal(res.status, 401);
     assert.equal(res.body.error, 'Unauthorized');
-    assert.equal((await call('GET', '/api/sync/status')).status, 401);
+    assert.equal((await call('GET', '/api/ticketsource/events')).status, 401);
   });
 
   test('Login failure with incorrect password returns 401', async () => {
@@ -162,19 +163,53 @@ describe('HTTP API & Authentication Integration Tests', () => {
     assert.equal(csv.headers.get('content-type'), 'text/csv; charset=utf-8');
   });
 
-  test('Webhook requires the shared secret', async () => {
-    const ev = await createEvent(db, { name: 'Hook Event', event_date: '2026-11-05 18:00:00', capacity: 100 });
-    const payload = {
-      reference: 'TS-HOOK-1',
-      eventId: ev.id,
-      customer: { name: 'Hook', email: 'hook@example.com' },
-      tickets: [{ ticketType: 'Adult', price: 10 }],
-    };
-    assert.equal((await call('POST', '/api/sync/webhook', { json: payload })).status, 401);
-    const ok = await call('POST', '/api/sync/webhook', { json: payload, headers: { 'x-webhook-secret': 'whsec_test' } });
-    assert.equal(ok.status, 200);
-    const list = await call('GET', '/api/bookings', { cookie: adminCookie });
-    assert.equal(list.body.count, 1);
+  test('TicketSource endpoints: list, refresh, step sync, pin state (with role checks)', async () => {
+    const ts = createFakeTicketSource();
+    ts.addEvent('evt-live', 'Fireworks 2026', { dates: [{ id: 'dat-live', start: new Date(Date.now() + 5 * 86_400_000).toISOString() }] });
+    ts.addEvent('evt-old', 'Fireworks 2023', { archived: true, dates: [{ id: 'dat-old', start: '2023-11-05T18:00:00+00:00' }] });
+    ts.addBooking('dat-live', 1);
+    ENV.TICKETSOURCE_API_KEY = 'test-key';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = ts.fetch;
+    try {
+      assert.equal((await call('POST', '/api/ticketsource/events/refresh', { cookie: viewerCookie, json: {} })).status, 403);
+
+      const refresh = await call('POST', '/api/ticketsource/events/refresh', { cookie: operatorCookie, json: {} });
+      assert.equal(refresh.status, 200);
+      assert.equal(refresh.body.done, true);
+
+      const all = await call('GET', '/api/ticketsource/events', { cookie: viewerCookie });
+      assert.equal(all.body.configured, true);
+      assert.deepEqual(all.body.events.map((e) => e.state).sort(), ['archived', 'unsettled']);
+      const archived = await call('GET', '/api/ticketsource/events?state=archived', { cookie: viewerCookie });
+      assert.deepEqual(archived.body.events.map((e) => e.id), ['evt-old']);
+      assert.equal((await call('GET', '/api/ticketsource/events?state=bogus', { cookie: viewerCookie })).status, 400);
+
+      let step;
+      for (let i = 0; i < 10; i++) {
+        step = await call('POST', '/api/ticketsource/events/evt-live/sync', { cookie: operatorCookie, json: { start: i === 0 } });
+        if (step.body.done) break;
+      }
+      assert.equal(step.body.done, true);
+      assert.equal(step.body.imported, 1);
+      assert.equal((await call('GET', '/api/bookings', { cookie: adminCookie })).body.count, 1);
+
+      const booking = (await call('GET', '/api/bookings', { cookie: adminCookie })).body.bookings[0];
+      const detail = await call('GET', `/api/bookings/${booking.id}`, { cookie: adminCookie });
+      assert.equal(detail.body.booking.transactions.length, 1);
+      const csv = await call('GET', '/api/reports/transactions.csv', { cookie: adminCookie });
+      assert.equal(csv.status, 200);
+      assert.match(csv.body, /REF001/);
+
+      assert.equal((await call('PATCH', '/api/ticketsource/events/evt-live/state', { cookie: operatorCookie, json: { state: 'settled' } })).status, 403);
+      assert.equal((await call('PATCH', '/api/ticketsource/events/evt-live/state', { cookie: adminCookie, json: { state: 'settled' } })).status, 200);
+      const pinned = await call('GET', '/api/ticketsource/events?state=settled', { cookie: adminCookie });
+      assert.deepEqual(pinned.body.events.map((e) => e.id), ['evt-live']);
+      assert.equal((await call('POST', '/api/ticketsource/events/nope/sync', { cookie: operatorCookie, json: {} })).status, 404);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete ENV.TICKETSOURCE_API_KEY;
+    }
   });
 
   test('Initial admin is created from ADMIN_INITIAL_PASSWORD when no users exist', async () => {

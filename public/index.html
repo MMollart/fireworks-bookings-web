@@ -39,7 +39,7 @@
       <a class="nav-tab" data-tab="tickets">🏷️ Tickets & Check-In</a>
       <a class="nav-tab" data-tab="customers">👥 Customers</a>
       <a class="nav-tab" data-tab="reports">📈 Reports & Analysis</a>
-      <a class="nav-tab" data-tab="sync">🔄 TicketSource Sync</a>
+      <a class="nav-tab" data-tab="sync">🔄 TicketSource</a>
       <a class="nav-tab" data-tab="admin" id="adminTab" style="display: none;">⚙️ Admin</a>
     </div>
   </nav>
@@ -398,49 +398,58 @@
     <section id="section-sync" class="page-section">
       <div class="section-header">
         <div>
-          <h2 class="section-title">TicketSource Sync</h2>
-          <p class="section-desc">Automated and resumable ingestion flow for event orders</p>
+          <h2 class="section-title">TicketSource</h2>
+          <p class="section-desc">Read-only import of events, bookings and transactions. Nothing is ever written back to TicketSource.</p>
         </div>
         <div class="header-actions">
-          <button class="btn btn-primary" id="triggerSyncBtn">⚡ Run Sync Now</button>
+          <select id="tsStateFilter" class="filter-select">
+            <option value="">All events</option>
+            <option value="unsettled">Unsettled</option>
+            <option value="settled">Settled</option>
+            <option value="archived">Archived</option>
+          </select>
+          <button class="btn btn-secondary" id="tsRefreshEventsBtn">↻ Refresh event list</button>
         </div>
       </div>
 
       <div class="kpi-grid">
         <div class="kpi-card accent-blue">
-          <div class="kpi-label">Sync Mode</div>
-          <div class="kpi-value" id="syncModeLabel" style="font-size: 1.25rem;">Checking...</div>
-          <div class="kpi-sub" id="syncModeSub">API Connection</div>
+          <div class="kpi-label">Connection</div>
+          <div class="kpi-value" id="tsConnection" style="font-size: 1.25rem;">Checking...</div>
+          <div class="kpi-sub" id="tsConnectionSub">&nbsp;</div>
         </div>
         <div class="kpi-card accent-green">
-          <div class="kpi-label">Latest Checkpoint Status</div>
-          <div class="kpi-value" id="syncStatusLabel" style="font-size: 1.25rem;">Idle</div>
-          <div class="kpi-sub" id="syncCursorLabel">Cursor: None</div>
+          <div class="kpi-label">API usage (last minute)</div>
+          <div class="kpi-value" id="tsRateUsed" style="font-size: 1.25rem;">0 / 0</div>
+          <div class="kpi-sub" id="tsRateSub">Limit is 240 calls/min; this app stays below it</div>
         </div>
         <div class="kpi-card accent-purple">
-          <div class="kpi-label">Last Records Imported</div>
-          <div class="kpi-value" id="syncImportedCount">0</div>
-          <div class="kpi-sub" id="syncCompletedAt">Never</div>
+          <div class="kpi-label">Sync status</div>
+          <div class="kpi-value" id="tsSyncStatus" style="font-size: 1.25rem;">Idle</div>
+          <div class="kpi-sub" id="tsSyncDetail">&nbsp;</div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title">Recent Ingestion Logs</h3>
+          <h3 class="card-title">Events</h3>
         </div>
         <div class="card-body">
+          <p class="section-desc" id="tsStateHelp" style="margin-bottom: 0.75rem;"></p>
           <div class="table-responsive">
-            <table class="data-table" id="syncLogsTable">
+            <table class="data-table" id="tsEventsTable">
               <thead>
                 <tr>
-                  <th>Timestamp</th>
-                  <th>Action</th>
-                  <th>Reference</th>
-                  <th>Details</th>
+                  <th>Event</th>
+                  <th>State</th>
+                  <th>Dates</th>
+                  <th>Bookings stored</th>
+                  <th>Last synced</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="4" style="text-align: center;">Loading logs...</td></tr>
+                <tr><td colspan="6" style="text-align: center;">Loading events...</td></tr>
               </tbody>
             </table>
           </div>

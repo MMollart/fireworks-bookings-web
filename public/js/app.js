@@ -69,23 +69,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ----------------------------------------------------
   function openModal(modalId) {
     const m = document.getElementById(modalId);
-    if (m) m.classList.add('open');
+    if (m) m.classList.add('active');
   }
 
   function closeModal(modalId) {
     const m = document.getElementById(modalId);
-    if (m) m.classList.remove('open');
+    if (m) m.classList.remove('active');
   }
 
   document.querySelectorAll('.close-modal').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
     });
   });
 
   window.addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-overlay')) {
-      e.target.classList.remove('open');
+      e.target.classList.remove('active');
     }
   });
 
@@ -230,14 +230,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     tbody.innerHTML = events.map(ev => {
       const sold = ev.tickets_sold || 0;
-      const cap = ev.capacity || 1;
-      const pct = Math.min(100, Math.round((sold / cap) * 100));
+      const cap = ev.capacity || 0;
+      const pct = cap ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
       return `
         <tr>
           <td><strong>${escapeHtml(ev.name)}</strong></td>
           <td>${formatDate(ev.event_date)}</td>
           <td>${escapeHtml(ev.venue || '—')}</td>
-          <td>${Number(ev.capacity) || 0}</td>
+          <td>${Number(ev.capacity) || '—'}</td>
           <td>${sold}</td>
           <td>
             <div class="progress-bar-bg" title="${pct}% sold">
@@ -298,15 +298,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       tbody.innerHTML = allEvents.map(ev => {
         const sold = ev.tickets_sold || 0;
-        const cap = ev.capacity || 1;
-        const pct = Math.min(100, Math.round((sold / cap) * 100));
+        const cap = ev.capacity || 0;
+        const pct = cap ? Math.min(100, Math.round((sold / cap) * 100)) : 0;
         return `
           <tr>
             <td><strong>${escapeHtml(ev.name)}</strong></td>
             <td>${formatDate(ev.event_date)}</td>
             <td>${escapeHtml(ev.venue || '—')}</td>
             <td>${escapeHtml(ev.gates_open || '—')} / ${escapeHtml(ev.display_time || '—')}</td>
-            <td>${Number(ev.capacity) || 0}</td>
+            <td>${Number(ev.capacity) || '—'}</td>
             <td>${sold} (${pct}%)</td>
             <td>${formatCurrency(ev.gross_revenue || 0)}</td>
             <td>${getStatusBadge(ev.status)}</td>
@@ -470,13 +470,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       let ticketListHtml = tickets.map(t => `
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color);">
           <div>
-            <code>${escapeHtml(t.barcode)}</code> — <strong>${escapeHtml(t.ticket_type)}</strong> (${formatCurrency(t.price)})
+            <code>${escapeHtml(t.barcode)}</code> — <strong>${escapeHtml(t.ticket_type)}</strong> (${formatCurrency(t.price)})${
+              t.attendee ? ` — ${escapeHtml([t.attendee.first_name, t.attendee.last_name].filter(Boolean).join(' ') || t.attendee.email || '')}` : ''
+            }
           </div>
           <div>
             ${t.is_checked_in ? `<span class="badge badge-success">Checked in ${formatDate(t.checked_in_at)}</span>` : `<span class="badge badge-neutral">Not checked in</span>`}
           </div>
         </div>
       `).join('');
+
+      const transactions = b.transactions || [];
+      const txHtml = transactions.length
+        ? `<table class="data-table"><thead><tr><th>Type</th><th>Method</th><th>Gross</th><th>Fee</th><th>Net</th><th>Discount</th></tr></thead><tbody>${transactions.map((x) => `
+            <tr>
+              <td>${escapeHtml(x.line_type || '—')}${x.is_refund ? ' <span class="badge badge-danger">refund</span>' : ''}</td>
+              <td>${escapeHtml(x.payment_method || '—')}</td>
+              <td>${x.is_refund ? '-' : ''}${formatCurrency(x.gross)}</td>
+              <td>${formatCurrency((x.fee || 0) + (x.fee_vat || 0))}</td>
+              <td>${formatCurrency(x.net)}</td>
+              <td>${formatCurrency((x.discount_automatic || 0) + (x.discount_code_amount || 0))}${x.discount_code_description ? ` (${escapeHtml(x.discount_code_description)})` : ''}</td>
+            </tr>`).join('')}</tbody></table>`
+        : '<p style="color: var(--text-muted);">No transaction records.</p>';
 
       content.innerHTML = `
         <div style="margin-bottom: 1.25rem;">
@@ -500,6 +515,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div>
           <h4 style="margin-bottom: 0.5rem; font-size: 1rem;">Tickets (${tickets.length})</h4>
           <div>${ticketListHtml || '<p style="color: var(--text-muted);">No ticket records found.</p>'}</div>
+        </div>
+
+        <div style="margin-top: 1.25rem;">
+          <h4 style="margin-bottom: 0.5rem; font-size: 1rem;">Transactions</h4>
+          ${txHtml}
         </div>
       `;
     } catch {
@@ -753,81 +773,155 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // ----------------------------------------------------
-  // 7. TicketSource Sync
+  // 7. TicketSource (read-only import)
   // ----------------------------------------------------
+  const TS_STATE_HELP = {
+    unsettled: 'Unsettled events pull only bookings changed since the last checkpoint.',
+    settled: 'Settled events are re-read in full when you refresh them.',
+    archived: 'Archived events are re-read in full when you refresh them.',
+  };
+  let tsBusy = false;
+
+  function tsSetStatus(label, detail) {
+    document.getElementById('tsSyncStatus').textContent = label;
+    document.getElementById('tsSyncDetail').textContent = detail || '\u00a0';
+  }
+
+  async function tsPost(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.message || `Request failed (${res.status})`);
+    return data;
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   async function loadSync() {
     try {
-      const res = await fetch('/api/sync/status');
+      const state = document.getElementById('tsStateFilter').value;
+      const res = await fetch(`/api/ticketsource/events${state ? `?state=${encodeURIComponent(state)}` : ''}`);
       if (!res.ok) return;
       const data = await res.json();
 
-      const modeLabel = document.getElementById('syncModeLabel');
-      const modeSub = document.getElementById('syncModeSub');
-      const statusLabel = document.getElementById('syncStatusLabel');
-      const cursorLabel = document.getElementById('syncCursorLabel');
-      const importedCount = document.getElementById('syncImportedCount');
-      const completedAt = document.getElementById('syncCompletedAt');
+      document.getElementById('tsConnection').textContent = data.configured ? 'Connected' : 'Not configured';
+      document.getElementById('tsConnectionSub').textContent = data.configured
+        ? 'Read-only API key set'
+        : 'Set the TICKETSOURCE_API_KEY secret';
+      document.getElementById('tsRateUsed').textContent = `${data.rate.usedLastMinute} / ${data.rate.limitPerMinute}`;
+      document.getElementById('tsRateSub').textContent = data.rate.blockedUntil
+        ? `Paused by TicketSource until ${formatDate(data.rate.blockedUntil)}`
+        : 'Limit is 240 calls/min; this app stays below it';
+      document.getElementById('tsStateHelp').textContent =
+        `Events with no TicketSource settlement flag are treated as settled ${data.settlementDays} days after their last date ends. ` +
+        (currentUser?.role === 'admin' ? 'Admins can pin an event as settled or unsettled.' : '');
 
-      if (data.hasApiKey) {
-        modeLabel.textContent = 'Live TicketSource API';
-        modeSub.textContent = 'Connected via API key';
-      } else {
-        modeLabel.textContent = 'Not configured';
-        modeSub.textContent = 'Set TICKETSOURCE_API_KEY to enable sync';
+      const canSync = currentUser && currentUser.role !== 'viewer';
+      const tbody = document.querySelector('#tsEventsTable tbody');
+      if (!data.events.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">${
+          data.configured ? 'No events cached yet. Click "Refresh event list".' : 'TicketSource is not configured.'
+        }</td></tr>`;
+        return;
       }
 
-      const cp = data.latestCheckpoint;
-      if (cp) {
-        statusLabel.textContent = cp.status.toUpperCase();
-        cursorLabel.textContent = `Cursor: ${cp.cursor || 'None'}`;
-        importedCount.textContent = cp.records_imported || 0;
-        completedAt.textContent = formatDate(cp.completed_at || cp.started_at);
-      } else {
-        statusLabel.textContent = 'Never Run';
-        cursorLabel.textContent = 'No checkpoints recorded';
-        importedCount.textContent = '0';
-        completedAt.textContent = 'Never';
-      }
-
-      const logs = data.recentLogs || [];
-      const tbody = document.querySelector('#syncLogsTable tbody');
-      if (!logs.length) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No sync activity logged yet.</td></tr>';
-      } else {
-        tbody.innerHTML = logs.map(l => `
+      const badge = { unsettled: 'badge-warning', settled: 'badge-success', archived: 'badge-neutral' };
+      tbody.innerHTML = data.events.map((ev) => {
+        const dates = ev.dates.length
+          ? ev.dates.map((d) => formatDate(d.starts_at)).join('<br>')
+          : '<span style="color: var(--text-muted);">not loaded</span>';
+        const mode = ev.state === 'unsettled' ? 'since checkpoint' : 'full';
+        return `
           <tr>
-            <td>${formatDate(l.created_at)}</td>
-            <td><span class="badge ${l.action === 'error' ? 'badge-danger' : 'badge-neutral'}">${escapeHtml(l.action)}</span></td>
-            <td><code>${escapeHtml(l.reference || '—')}</code></td>
-            <td>${escapeHtml(l.message || '—')}</td>
-          </tr>
-        `).join('');
-      }
+            <td><strong>${escapeHtml(ev.name || ev.id)}</strong><br><small style="color: var(--text-muted);">${escapeHtml(ev.id)}</small></td>
+            <td><span class="badge ${badge[ev.state] || 'badge-neutral'}">${escapeHtml(ev.state)}</span>${ev.state_pinned ? ' <small>(pinned)</small>' : ''}</td>
+            <td>${dates}</td>
+            <td>${ev.bookings_imported}</td>
+            <td>${ev.last_synced_at ? formatDate(ev.last_synced_at) : 'Never'}${ev.sync_in_progress ? '<br><small>in progress</small>' : ''}</td>
+            <td>
+              ${canSync ? `<button class="btn btn-primary btn-sm ts-sync-btn" data-id="${escapeHtml(ev.id)}" data-mode="">Refresh bookings (${mode})</button>
+              <button class="btn btn-secondary btn-sm ts-sync-btn" data-id="${escapeHtml(ev.id)}" data-mode="force" title="Re-read every booking and customer, ignoring the checkpoint and caches">Full re-sync</button>` : ''}
+              ${currentUser?.role === 'admin' && !ev.archived ? `<button class="btn btn-secondary btn-sm ts-pin-btn" data-id="${escapeHtml(ev.id)}" data-state="${ev.state === 'settled' ? 'unsettled' : 'settled'}">Mark ${ev.state === 'settled' ? 'unsettled' : 'settled'}</button>` : ''}
+            </td>
+          </tr>`;
+      }).join('');
+
+      document.querySelectorAll('.ts-sync-btn').forEach((btn) => {
+        btn.addEventListener('click', () => syncTsEvent(btn.dataset.id, btn.dataset.mode));
+      });
+      document.querySelectorAll('.ts-pin-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const r = await fetch(`/api/ticketsource/events/${encodeURIComponent(btn.dataset.id)}/state`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state: btn.dataset.state })
+          });
+          if (r.ok) loadSync(); else showToast('Failed to update event state', 'error');
+        });
+      });
     } catch (err) {
-      console.error('Error loading sync status:', err);
+      console.error('Error loading TicketSource events:', err);
     }
   }
 
-  document.getElementById('triggerSyncBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('triggerSyncBtn');
-    btn.disabled = true;
-    btn.textContent = 'Syncing...';
-
+  // Keeps calling the resumable step endpoint until the event is fully synced, waiting out rate limits.
+  async function syncTsEvent(eventId, mode) {
+    if (tsBusy) return;
+    tsBusy = true;
+    document.querySelectorAll('.ts-sync-btn, #tsRefreshEventsBtn').forEach((b) => (b.disabled = true));
+    let imported = 0;
+    let seen = 0;
     try {
-      const res = await fetch('/api/sync/trigger', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showToast(data.error || data.message || 'Sync failed', 'error');
-        loadSync();
-      } else {
-        showToast(`Sync completed! ${data.importedCount || 0} bookings imported.${data.hasMore ? ' More remain - run sync again.' : ''}`, 'success');
-        loadSync();
+      for (let step = 0; step < 2000; step++) {
+        const r = await tsPost(`/api/ticketsource/events/${encodeURIComponent(eventId)}/sync`, { mode: mode || undefined, start: step === 0 });
+        imported += r.imported || 0;
+        seen += r.seen || 0;
+        if (r.done) {
+          tsSetStatus('Complete', `${imported} bookings imported or updated (${seen} checked)`);
+          showToast(`Sync complete: ${imported} bookings imported or updated`, 'success');
+          break;
+        }
+        const waitMs = Math.max(500, r.retryAfterMs || 0);
+        const why = r.waiting === 'budget' ? 'working' : r.waiting === 'rate_limited' ? 'TicketSource asked us to pause' : 'waiting for API allowance';
+        tsSetStatus('Syncing...', `${imported} imported so far - ${why}${waitMs > 2000 ? ` (${Math.round(waitMs / 1000)}s)` : ''}`);
+        await sleep(r.waiting === 'budget' ? 300 : waitMs);
       }
-    } catch {
-      showToast('Network error triggering sync', 'error');
+    } catch (err) {
+      tsSetStatus('Failed', err.message);
+      showToast(err.message, 'error');
     } finally {
+      tsBusy = false;
+      document.querySelectorAll('.ts-sync-btn, #tsRefreshEventsBtn').forEach((b) => (b.disabled = false));
+      loadSync();
+    }
+  }
+
+  document.getElementById('tsStateFilter').addEventListener('change', loadSync);
+
+  document.getElementById('tsRefreshEventsBtn').addEventListener('click', async () => {
+    if (tsBusy) return;
+    tsBusy = true;
+    const btn = document.getElementById('tsRefreshEventsBtn');
+    btn.disabled = true;
+    tsSetStatus('Refreshing events...', '');
+    try {
+      for (let i = 0; i < 100; i++) {
+        const r = await tsPost('/api/ticketsource/events/refresh', { force: i === 0 });
+        if (r.done) break;
+        await sleep(Math.max(500, r.retryAfterMs || 0));
+      }
+      tsSetStatus('Idle', 'Event list refreshed');
+      showToast('Event list refreshed', 'success');
+    } catch (err) {
+      tsSetStatus('Failed', err.message);
+      showToast(err.message, 'error');
+    } finally {
+      tsBusy = false;
       btn.disabled = false;
-      btn.textContent = '⚡ Run Sync Now';
+      loadSync();
     }
   });
 

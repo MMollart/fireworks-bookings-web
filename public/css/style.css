@@ -14,6 +14,7 @@
   --text-inverse: #ffffff;
 
   --primary: #2563eb;
+  --brand-primary: #2563eb;
   --primary-hover: #1d4ed8;
   --primary-subtle: #eff6ff;
 
@@ -672,3 +673,19 @@ body {
   margin-top: 1.25rem;
   border-left: 3px solid #3b82f6;
 }
+
+/* Class names used by js/app.js */
+.modal-overlay.open { display: flex; }
+
+.badge-success { background-color: var(--success-bg); color: var(--success); }
+.badge-warning { background-color: var(--warning-bg); color: var(--warning); }
+.badge-danger { background-color: var(--danger-bg); color: var(--danger); }
+.badge-neutral { background-color: #f1f5f9; color: var(--text-muted); }
+
+.toast.success { background-color: #15803d; }
+.toast.error { background-color: #b91c1c; }
+.toast.warning { background-color: #b45309; }
+
+.progress-bar-bg { width: 100%; min-width: 80px; height: 6px; border-radius: 9999px; background-color: #e2e8f0; overflow: hidden; }
+.progress-bar-fill { height: 100%; background-color: var(--primary); }
+.text-danger { color: var(--danger); }
