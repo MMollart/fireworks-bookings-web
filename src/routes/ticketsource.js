@@ -4,6 +4,7 @@ import { requireOperator, requireAdmin } from '../auth/middleware.js';
 import { TicketSourceClient, StepLimit, rateStatus, getState } from '../ticketsource/client.js';
 import { refreshEvents, listEventSummaries } from '../ticketsource/events.js';
 import { syncEventStep } from '../ticketsource/engine.js';
+import { refreshUnsettled } from '../ticketsource/auto.js';
 
 const makeClient = (c) => new TicketSourceClient(c.get('db'), config.ticketSource);
 
@@ -71,6 +72,9 @@ export function ticketSourceRoutes() {
       return stepFailure(c, err);
     }
   });
+
+  // Runs the scheduled refresh of unsettled events now (admin), within a short time budget.
+  r.post('/auto-refresh', requireAdmin, async (c) => c.json(await refreshUnsettled(c.get('db'), config.ticketSource, { budgetMs: 25_000 })));
 
   // Pin an event as settled/unsettled (TicketSource's API has no settlement flag). null = automatic.
   r.patch('/events/:id/state', requireAdmin, async (c) => {

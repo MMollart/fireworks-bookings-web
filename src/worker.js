@@ -21,11 +21,13 @@ export default {
       ]);
     }
 
-    const cfg = initConfig(env).ticketSource;
     try {
+      const cfg = initConfig(env).ticketSource;
       console.log('Unsettled event refresh:', JSON.stringify(await refreshUnsettled(db, cfg)));
     } catch (err) {
       console.error('Unsettled event refresh failed:', err);
+      await db.prepare("INSERT OR REPLACE INTO ts_state (key, value) VALUES ('auto_refresh_result', ?)").run(JSON.stringify({ status: 'error', error: String(err.message || err) }));
+      await db.prepare("INSERT OR REPLACE INTO ts_state (key, value) VALUES ('auto_refresh_at', ?)").run(new Date().toISOString());
     }
   },
 };
