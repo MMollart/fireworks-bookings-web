@@ -4,6 +4,7 @@
  *
  * Bookings missing a creation date or a performance start cannot be aligned: they are excluded and counted.
  * `cutoff` ("sales to date") keeps only bookings made at least that many days before their performance.
+ * The comparison can be another event or the average across a set of events (`comparison: 'average'`).
  * Bands not covered by the download are `none` (null values: No data), never zero.
  */
 import { londonDay } from './time.js';
@@ -60,15 +61,21 @@ function align(bookings, perfById, group, cutoff) {
   return { bands, excluded, included };
 }
 
+/** Per performance: the days-before position of its last download (null when it cannot be placed). Computed once per event. */
+function downloadPositions(perfs) {
+  return perfs.map((p) => {
+    const start = londonDay(p.starts_at);
+    const sync = londonDay(p.last_synced_at);
+    return { id: p.id, dbs: !isComplete(p) || start === null || sync === null ? null : start - sync };
+  });
+}
+
 /** Coverage of a daysBefore band [lo, hi] for an event's performances. */
-function coverage(perfs, group, key, hasDataPerfs) {
+function coverage(positions, group, key, hasDataPerfs) {
   const { lo, hi } = bandRange(group, key);
   return combineCoverage(
-    perfs.map((p) => {
-      const start = londonDay(p.starts_at);
-      const sync = londonDay(p.last_synced_at);
-      if (!isComplete(p) || start === null || sync === null) return hasDataPerfs.has(p.id) ? 'partial' : 'none';
-      const dbs = start - sync; // days-before position of the last download
+    positions.map(({ id, dbs }) => {
+      if (dbs === null) return hasDataPerfs.has(id) ? 'partial' : 'none';
       if (lo > dbs) return 'complete';
       if (hi < dbs) return 'none';
       return 'partial';
@@ -83,7 +90,7 @@ function values(band) {
 export function summariseEvent(data, group, cutoff) {
   const perfById = new Map(data.performances.map((p) => [p.id, p]));
   const aligned = align(data.bookings, perfById, group, cutoff);
-  return { ...aligned, performances: data.performances };
+  return { ...aligned, performances: data.performances, positions: downloadPositions(data.performances) };
 }
 
 const diffMoney = (a, b) => {
@@ -94,7 +101,7 @@ const diffMoney = (a, b) => {
 
 function bandSide(summary, group, key) {
   const band = summary.bands.get(key);
-  const cov = coverage(summary.performances, group, key, band ? band.perfs : new Set());
+  const cov = coverage(summary.positions, group, key, band ? band.perfs : new Set());
   return cov === 'none' ? { coverage: cov, tickets: null, bookings: null, gross: null, net: null } : { coverage: cov, ...values(band) };
 }
 
@@ -103,18 +110,23 @@ function difference(a, b) {
   return { tickets: a.tickets - b.tickets, bookings: a.bookings - b.bookings, gross: diffMoney(a.gross, b.gross), net: diffMoney(a.net, b.net) };
 }
 
+const NO_AVERAGE = { coverage: 'none', events: 0, tickets: null, bookings: null, gross: null, net: null };
+
 /**
- * selected / comparison: { performances, bookings } loaders' output. others: [{ id, name, data }] used for the average.
+ * selected / comparison: { performances, bookings } loaders' output, or comparison = 'average' to compare with the average
+ * across `others`. others: [{ id, name, data }] used for the average.
  */
 export function compareEvents({ selected, comparison, others = [], group = 'whole', cutoff = null, includeAverage = false }) {
   if (!COMPARE_GROUPS.includes(group)) throw new Error(`group must be one of ${COMPARE_GROUPS.join(', ')}`);
+  const versusAverage = comparison === 'average';
+  const needAverage = includeAverage || versusAverage;
 
   const sel = summariseEvent(selected, group, cutoff);
-  const cmp = summariseEvent(comparison, group, cutoff);
-  const avgEvents = includeAverage ? others.map((o) => summariseEvent(o.data, group, cutoff)) : [];
+  const avgEvents = needAverage ? others.map((o) => summariseEvent(o.data, group, cutoff)) : [];
+  const cmp = versusAverage ? null : summariseEvent(comparison, group, cutoff);
 
-  const keys = new Set([...sel.bands.keys(), ...cmp.bands.keys()]);
-  for (const a of avgEvents) for (const k of a.bands.keys()) keys.add(k);
+  const keys = new Set(sel.bands.keys());
+  for (const s of cmp ? [cmp, ...avgEvents] : avgEvents) for (const k of s.bands.keys()) keys.add(k);
   if (group === 'whole') keys.add('all');
 
   const numeric = [...keys].filter((k) => typeof k === 'number');
@@ -126,13 +138,20 @@ export function compareEvents({ selected, comparison, others = [], group = 'whol
 
   const rows = ordered.map((key) => {
     const selected = bandSide(sel, group, key);
-    const comparison = bandSide(cmp, group, key);
     let average = null;
-    if (includeAverage) {
+    if (needAverage) {
       const sides = avgEvents.map((e) => bandSide(e, group, key)).filter((s) => s.coverage !== 'none');
-      average = sides.length ? averageOf(sides) : { coverage: 'none', events: 0, tickets: null, bookings: null, gross: null, net: null };
+      average = sides.length ? averageOf(sides) : NO_AVERAGE;
     }
-    return { key: String(key), label: bandLabel(group, key), selected, comparison, average, difference: difference(selected, comparison) };
+    const comparison = versusAverage ? average : bandSide(cmp, group, key);
+    return {
+      key: String(key),
+      label: bandLabel(group, key),
+      selected,
+      comparison,
+      average: includeAverage && !versusAverage ? average : null,
+      difference: difference(selected, comparison),
+    };
   });
 
   const total = (s) => {
@@ -145,25 +164,30 @@ export function compareEvents({ selected, comparison, others = [], group = 'whol
     const cov = combineCoverage(s.performances.map((p) => (isComplete(p) ? 'complete' : 'partial')));
     return { coverage: cov, tickets: acc.tickets, bookings: acc.bookings, ...splitMoney(acc.money) };
   };
-  const totals = { selected: total(sel), comparison: total(cmp) };
+  const averageTotal = () => (avgEvents.length ? averageOf(avgEvents.map(total)) : NO_AVERAGE);
+  const totals = { selected: total(sel), comparison: versusAverage ? averageTotal() : total(cmp) };
   totals.difference = difference(totals.selected, totals.comparison);
 
   const currencies = new Set();
   for (const r of rows) for (const side of [r.selected, r.comparison]) for (const m of [side.gross, side.net]) Object.keys(m ?? {}).forEach((c) => currencies.add(c));
 
+  const sum = (list, f) => list.reduce((n, x) => n + f(x), 0);
+  const incomplete = (s) => s.performances.filter((p) => !isComplete(p)).length;
+  const cmpExcluded = versusAverage ? sum(avgEvents, (e) => e.excluded) : cmp.excluded;
   return {
     group,
     cutoff,
-    includeAverage,
+    includeAverage: includeAverage && !versusAverage,
+    versusAverage,
     currencies: [...currencies].sort(),
     rows,
     totals,
-    excluded: { selected: sel.excluded, comparison: cmp.excluded, total: sel.excluded + cmp.excluded },
+    excluded: { selected: sel.excluded, comparison: cmpExcluded, total: sel.excluded + cmpExcluded },
     incomplete: {
-      selected: sel.performances.filter((p) => !isComplete(p)).length,
-      comparison: cmp.performances.filter((p) => !isComplete(p)).length,
+      selected: incomplete(sel),
+      comparison: versusAverage ? sum(avgEvents, incomplete) : incomplete(cmp),
     },
-    averageEvents: includeAverage ? avgEvents.length : 0,
+    averageEvents: needAverage ? avgEvents.length : 0,
   };
 }
 

@@ -7,7 +7,7 @@ import { TicketSourceClient } from '../src/ticketsource/client.js';
 import { refreshEvents } from '../src/ticketsource/events.js';
 import { syncEventStep } from '../src/ticketsource/engine.js';
 import { londonDay, dayToIso, periodOf, weekStart } from '../src/analysis/time.js';
-import { loadBookings } from '../src/analysis/data.js';
+import { loadBookings, loadBookingsByEvent } from '../src/analysis/data.js';
 import { salesOverTime } from '../src/analysis/sales.js';
 import { compareEvents } from '../src/analysis/compare.js';
 import { loadCodeLines, summariseDiscounts, normaliseCode } from '../src/analysis/discounts.js';
@@ -208,6 +208,30 @@ describe('Analysis', () => {
       assert.equal(out.averageEvents, 3);
       assert.equal(out.rows[0].average.events, 3);
       assert.equal(Math.round(out.rows[0].average.tickets * 100) / 100, Math.round(((3 + 7 + 1) / 3) * 100) / 100);
+    });
+
+    test('comparing with the average uses the average as the comparison side', async () => {
+      const { selected, others } = await load();
+      const out = compareEvents({ selected, comparison: 'average', others, group: 'daily' });
+      const row = (label) => out.rows.find((r) => r.label === label);
+      assert.equal(out.versusAverage, true);
+      assert.equal(out.includeAverage, false);
+      assert.equal(out.averageEvents, 3);
+      assert.equal(row('10 days before').comparison.tickets, 2); // (2 + 3 + 1) / 3
+      assert.equal(row('10 days before').difference.tickets, 0);
+      assert.equal(row('10 days before').average, null);
+      assert.equal(out.totals.comparison.tickets, Math.round(((3 + 7 + 1) / 3) * 100) / 100);
+    });
+
+    test('loading every event at once matches loading each event on its own', async () => {
+      const byEvent = await loadBookingsByEvent(db);
+      assert.deepEqual([...byEvent.keys()].sort(), ['evt-a', 'evt-b', 'evt-c']);
+      for (const id of byEvent.keys()) {
+        const one = await loadBookings(db, { eventId: id });
+        const sortById = (list) => [...list].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+        assert.deepEqual(sortById(byEvent.get(id).bookings), sortById(one.bookings));
+        assert.deepEqual(byEvent.get(id).performances, one.performances);
+      }
     });
 
     test('bands past the download are No data, not zero', async () => {

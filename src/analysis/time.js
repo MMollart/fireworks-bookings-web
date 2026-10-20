@@ -5,14 +5,24 @@
 const TZ = 'Europe/London';
 const parts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
+
+// Intl formatting is slow, and London's UTC offset only changes on the hour, so the day is cached per UTC hour.
+const dayByHour = new Map();
 
 /** London calendar day number for an ISO timestamp / date string / epoch ms; null when missing or invalid. */
 export function londonDay(value) {
   if (value === null || value === undefined || value === '') return null;
   const ms = typeof value === 'number' ? value : Date.parse(value);
   if (!Number.isFinite(ms)) return null;
-  const p = Object.fromEntries(parts.formatToParts(new Date(ms)).filter((x) => x.type !== 'literal').map((x) => [x.type, Number(x.value)]));
-  return Date.UTC(p.year, p.month - 1, p.day) / DAY;
+  const hour = Math.floor(ms / HOUR);
+  let day = dayByHour.get(hour);
+  if (day === undefined) {
+    const p = Object.fromEntries(parts.formatToParts(new Date(hour * HOUR)).filter((x) => x.type !== 'literal').map((x) => [x.type, Number(x.value)]));
+    day = Date.UTC(p.year, p.month - 1, p.day) / DAY;
+    dayByHour.set(hour, day);
+  }
+  return day;
 }
 
 export const dayToIso = (n) => new Date(n * DAY).toISOString().slice(0, 10);

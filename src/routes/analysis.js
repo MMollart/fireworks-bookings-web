@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { config } from '../config.js';
-import { loadScopeOptions, loadBookings, isComplete, loadEventName } from '../analysis/data.js';
+import { loadScopeOptions, loadBookings, loadBookingsByEvent, isComplete, loadEventName } from '../analysis/data.js';
 import { salesOverTime, GROUPS } from '../analysis/sales.js';
 import { compareEvents, COMPARE_GROUPS } from '../analysis/compare.js';
 import { loadCodeLines, summariseDiscounts } from '../analysis/discounts.js';
@@ -47,12 +47,16 @@ export function analysisRoutes() {
     return c.json({ scope: { eventId }, ...salesOverTime(data, group) });
   });
 
+  // compareEventId = 'average' compares with the average across all events with downloaded bookings.
   r.get('/compare', async (c) => {
     const db = c.get('db');
     const { eventId, compareEventId, group = 'whole', cutoff, average } = c.req.query();
+    const versusAverage = compareEventId === 'average';
     if (!COMPARE_GROUPS.includes(group)) return c.json({ error: `group must be one of ${COMPARE_GROUPS.join(', ')}` }, 400);
-    if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
-    if (!(await requireEvent(db, compareEventId))) return c.json({ error: 'Choose an event to compare with' }, 400);
+    const selectedEvent = await requireEvent(db, eventId);
+    if (!selectedEvent) return c.json({ error: 'Choose an event' }, 400);
+    const comparisonEvent = versusAverage ? null : await requireEvent(db, compareEventId);
+    if (!versusAverage && !comparisonEvent) return c.json({ error: 'Choose an event to compare with' }, 400);
     if (compareEventId === eventId) return c.json({ error: 'Choose a different event to compare with' }, 400);
 
     let cut = null;
@@ -61,24 +65,26 @@ export function analysisRoutes() {
       if (!Number.isInteger(cut) || cut < 0) return c.json({ error: 'Sales to date must be a whole number of days, 0 or more' }, 400);
     }
 
-    const includeAverage = average === '1' || average === 'true';
-    const selected = await loadBookings(db, { eventId });
-    const comparison = await loadBookings(db, { eventId: compareEventId });
-
+    const includeAverage = versusAverage || average === '1' || average === 'true';
+    let selected, comparison;
     let others = [];
     if (includeAverage) {
-      const { events } = await loadScopeOptions(db);
-      others = [];
-      for (const e of events.filter((x) => x.bookings > 0)) {
-        others.push({ id: e.id, name: e.name, data: await loadBookings(db, { eventId: e.id }) });
-      }
+      // one load for every event, rather than three queries per event
+      const byEvent = await loadBookingsByEvent(db);
+      selected = byEvent.get(eventId) || (await loadBookings(db, { eventId }));
+      comparison = versusAverage ? 'average' : byEvent.get(compareEventId) || (await loadBookings(db, { eventId: compareEventId }));
+      others = [...byEvent].map(([id, data]) => ({ id, data }));
+    } else {
+      selected = await loadBookings(db, { eventId });
+      comparison = await loadBookings(db, { eventId: compareEventId });
     }
 
+    const result = compareEvents({ selected, comparison, others, group, cutoff: cut, includeAverage });
     const names = {
-      selected: (await requireEvent(db, eventId)).name,
-      comparison: (await requireEvent(db, compareEventId)).name,
+      selected: selectedEvent.name,
+      comparison: versusAverage ? `Average of ${result.averageEvents} events` : comparisonEvent.name,
     };
-    return c.json({ scope: { eventId, compareEventId }, names, ...compareEvents({ selected, comparison, others, group, cutoff: cut, includeAverage }) });
+    return c.json({ scope: { eventId, compareEventId }, names, ...result });
   });
 
   // All events side by side by year. mode = all | equivalent (sales up to the same point in the sales cycle as `eventId` is at today).

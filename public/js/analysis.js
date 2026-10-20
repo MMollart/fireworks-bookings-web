@@ -13,7 +13,8 @@
   const state = {
     options: null,
     eventId: '',
-    mode: 'sales',
+    mode: 'compare',
+    cutoffFollowsToday: true, // the sales-to-date cutoff tracks the selected event's "today" point until the user edits it
     visible: null, // 'analysis' | 'discounts'
     req: { sales: 0, compare: 0, years: 0, discounts: 0 },
   };
@@ -217,6 +218,12 @@
     const others = events.filter((e) => e.id !== state.eventId);
     const prev = $('compareEvent').value;
     fillEventSelect($('compareEvent'), others, prev);
+    if (others.length) $('compareEvent').insertAdjacentHTML('beforeend', '<option value="average">Average of all events</option>');
+    if (prev === 'average' && others.length) $('compareEvent').value = 'average';
+    if (state.cutoffFollowsToday) {
+      const d = daysUntilPerformance();
+      $('compareCutoff').value = d === null ? '' : String(d);
+    }
   }
 
   function scopeQuery() {
@@ -357,7 +364,9 @@
       q.set('group', $('compareGroup').value);
       const cutoff = $('compareCutoff').value.trim();
       if (cutoff !== '') q.set('cutoff', cutoff);
-      if ($('compareAverage').checked) q.set('average', '1');
+      const versusAverage = other === 'average';
+      $('compareAverageLabel').style.display = versusAverage ? 'none' : ''; // the average is already the comparison
+      if (!versusAverage && $('compareAverage').checked) q.set('average', '1');
       const data = await getJson(`/api/analysis/compare?${q}`);
       if (id !== state.req.compare || state.mode !== 'compare') return;
       renderCompare(data);
@@ -586,6 +595,7 @@
     ['salesGroup', 'salesMeasure', 'salesCurrency'].forEach((id) => $(id).addEventListener('change', loadSales));
     ['yearsMeasure', 'yearsMode', 'yearsCurrency'].forEach((id) => $(id).addEventListener('change', loadYears));
     ['compareEvent', 'compareGroup', 'compareMeasure', 'compareCurrency', 'compareCutoff', 'compareAverage'].forEach((id) => $(id).addEventListener('change', loadCompare));
+    $('compareCutoff').addEventListener('input', () => { state.cutoffFollowsToday = false; });
     $('compareCutoffToday').addEventListener('click', () => {
       const d = daysUntilPerformance();
       if (d === null) {
@@ -593,6 +603,7 @@
         return;
       }
       $('compareCutoff').value = String(d);
+      state.cutoffFollowsToday = true;
       loadCompare();
     });
     $('discountScope').addEventListener('change', loadDiscounts);

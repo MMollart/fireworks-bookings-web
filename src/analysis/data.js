@@ -94,6 +94,20 @@ export async function loadBookings(db, scope = {}) {
   };
 }
 
+/** Every event's bookings in one load (three queries in total, not three per event): Map eventId -> { performances, bookings }.
+ *  Only events with at least one downloaded booking are included. */
+export async function loadBookingsByEvent(db) {
+  const all = await loadBookings(db);
+  const byEvent = new Map();
+  const entry = (id) => {
+    if (!byEvent.has(id)) byEvent.set(id, { performances: [], bookings: [] });
+    return byEvent.get(id);
+  };
+  for (const b of all.bookings) entry(b.event_id).bookings.push(b);
+  for (const p of all.performances) if (byEvent.has(p.event_id)) byEvent.get(p.event_id).performances.push(p);
+  return byEvent;
+}
+
 export function addMoney(target, money, sign = 1) {
   for (const [cur, v] of Object.entries(money)) {
     target[cur] ??= { gross: 0, net: 0, donations: 0 };
