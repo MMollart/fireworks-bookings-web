@@ -432,11 +432,15 @@
       return esc(v > 0 ? `+${num(v)}` : num(v));
     };
     $('analysisTable').querySelector('thead').innerHTML =
-      `<tr><th>Days before performance</th><th>${esc(sel)}</th><th>${esc(cmp)}</th><th>Difference</th>${data.includeAverage ? `<th>Average (${data.averageEvents} events)</th>` : ''}</tr>`;
-    $('analysisTable').querySelector('tbody').innerHTML = data.rows
+      `<tr><th aria-sort="ascending">Days before performance</th><th>${esc(sel)}</th><th>${esc(cmp)}</th><th>Difference</th>${data.includeAverage ? `<th>Average (${data.averageEvents} events)</th>` : ''}</tr>`;
+    // Table: closest to the performance first (performance day at the top), counting up; "after the performance" goes last.
+    // The chart above stays in timeline order. The first cell sorts by its band number.
+    const bandOrder = (r) => (r.key === 'after' ? Infinity : Number(r.key) || 0);
+    $('analysisTable').querySelector('tbody').innerHTML = [...data.rows]
+      .sort((a, b) => bandOrder(a) - bandOrder(b))
       .map(
         (r) =>
-          `<tr><td>${esc(r.label)}</td><td>${valueCell(measure, r.selected, currency)}</td><td>${valueCell(measure, r.comparison, currency)}</td><td>${diffCell(r)}</td>${
+          `<tr><td data-sort="${r.key === 'after' ? 999999 : esc(r.key)}">${esc(r.label)}</td><td>${valueCell(measure, r.selected, currency)}</td><td>${valueCell(measure, r.comparison, currency)}</td><td>${diffCell(r)}</td>${
             data.includeAverage ? `<td>${r.average && r.average.coverage !== 'none' ? valueCell(measure, r.average, currency) : NO_DATA}</td>` : ''
           }</tr>`
       )
