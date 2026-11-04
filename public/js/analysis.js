@@ -338,9 +338,11 @@
     });
 
     // table
-    $('analysisTable').querySelector('thead').innerHTML = '<tr><th>Period</th><th>Active tickets</th><th>Total bookings</th><th>Gross revenue</th><th>Net revenue</th><th>Donations</th></tr>';
-    const body = rows
-      .map((r) => `<tr><td>${esc(r.label)}</td><td>${valueCell('tickets', r)}</td><td>${valueCell('bookings', r)}</td><td>${valueCell('gross', r)}</td><td>${valueCell('net', r)}</td><td>${valueCell('donations', r)}</td></tr>`)
+    // Table: most recent period first (the chart above stays chronological). The Period cell sorts by its ISO start date.
+    $('analysisTable').querySelector('thead').innerHTML = '<tr><th aria-sort="descending">Period</th><th>Active tickets</th><th>Total bookings</th><th>Gross revenue</th><th>Net revenue</th><th>Donations</th></tr>';
+    const body = [...rows]
+      .reverse()
+      .map((r) => `<tr><td data-sort="${esc(r.start || r.key)}">${esc(r.label)}</td><td>${valueCell('tickets', r)}</td><td>${valueCell('bookings', r)}</td><td>${valueCell('gross', r)}</td><td>${valueCell('net', r)}</td><td>${valueCell('donations', r)}</td></tr>`)
       .join('');
     const total = `<tr class="total-row"><td>Whole event total</td><td>${esc(num(t.tickets))}</td><td>${esc(num(t.bookings))}</td><td>${moneyCell(t.gross)}</td><td>${moneyCell(t.net)}</td><td>${moneyCell(t.donations)}</td></tr>`;
     $('analysisTable').querySelector('tbody').innerHTML = body + (data.group === 'whole' ? '' : total);
