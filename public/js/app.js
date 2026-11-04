@@ -209,19 +209,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       select.value = dashboardEventId;
       select.disabled = !events.length;
 
-      const rev = data.financials?.gross_revenue || 0;
+      const net = data.financials?.net_revenue || 0;
       const disc = data.financials?.total_discounts || 0;
       const aov = data.financials?.aov || 0;
       const bCount = data.financials?.confirmed_bookings || 0;
 
-      document.getElementById('kpiRevenue').textContent = formatCurrency(rev);
-      document.getElementById('kpiDiscounts').textContent = `Discounts: ${formatCurrency(disc)}`;
+      document.getElementById('kpiRevenue').textContent = formatCurrency(net);
+      document.getElementById('kpiDiscounts').textContent = `After fees · Discounts: ${formatCurrency(disc)}`;
       document.getElementById('kpiBookings').textContent = bCount;
       document.getElementById('kpiAov').textContent = `Average Order: ${formatCurrency(aov)}`;
       document.getElementById('kpiTickets').textContent = data.tickets?.tickets_sold || 0;
       document.getElementById('kpiTicketBreakdown').textContent =
         (data.tickets?.breakdown || []).slice(0, 4).map(t => `${t.ticket_type} ${t.count}`).join(' · ') || '\u00a0';
-      document.getElementById('kpiCustomers').textContent = data.customers?.total || 0;
+      document.getElementById('kpiAvgNet').textContent = formatCurrency(data.financials?.avg_net_per_booking || 0);
       const don = data.donations || { total: 0, bookings: 0, gift_aid_bookings: 0 };
       document.getElementById('kpiDonations').textContent = formatCurrency(don.total);
       document.getElementById('kpiDonationsSub').textContent = don.bookings

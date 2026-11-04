@@ -61,6 +61,17 @@ export async function getDashboardSummary(db, { eventId } = {}) {
     )
     .get(selected.id);
 
+  // Net ticket revenue (after TicketSource fees), matching the Analysis page: signed sum of non-donation
+  // transaction lines, where refund lines subtract.
+  const netRow = await db
+    .prepare(
+      `SELECT COALESCE(SUM(CASE WHEN x.line_type = 'DONATION' THEN 0
+                                WHEN x.is_refund = 1 THEN -ABS(x.net) ELSE x.net END), 0) AS net
+       FROM booking_transactions x JOIN bookings b ON b.id = x.booking_id WHERE ${inEvent}`
+    )
+    .get(selected.id);
+  const netRevenue = Math.round((netRow?.net || 0) * 100) / 100;
+
   const donation = (await donationTotals(db, { eventId: selected.id }))[0] || { total: 0, bookings: 0, gift_aid_bookings: 0, gift_aid_total: 0 };
   const grossRevenue = Math.round((stats.gross_revenue - donation.total) * 100) / 100; // ticket revenue: donations are separate
   const confirmed = stats.confirmed_bookings || 0;
@@ -74,9 +85,10 @@ export async function getDashboardSummary(db, { eventId } = {}) {
     financials: {
       gross_revenue: grossRevenue,
       total_discounts: stats.total_discounts,
-      net_revenue: parseFloat((grossRevenue - stats.total_discounts).toFixed(2)),
+      net_revenue: netRevenue,
       confirmed_bookings: confirmed,
       aov,
+      avg_net_per_booking: confirmed > 0 ? parseFloat((netRevenue / confirmed).toFixed(2)) : 0,
     },
     donations: { total: donation.total, bookings: donation.bookings, gift_aid_bookings: donation.gift_aid_bookings, gift_aid_total: donation.gift_aid_total },
     bookings: { total: stats.total_bookings_all || 0, confirmed, refunded: stats.refunded_bookings || 0 },

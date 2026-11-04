@@ -216,6 +216,8 @@ describe('Event names, dashboard, reports, dictionary, search, auto refresh', ()
     const dash = await getDashboardSummary(db);
     assert.deepEqual([dash.donations.total, dash.donations.bookings, dash.donations.gift_aid_bookings, dash.donations.gift_aid_total], [15, 2, 1, 5]);
     assert.equal(dash.financials.gross_revenue - before.financials.gross_revenue, 40); // 2 x 20 of tickets, donations excluded
+    assert.equal(dash.financials.net_revenue - before.financials.net_revenue, 40); // net from transaction lines, donations excluded
+    assert.equal(dash.financials.avg_net_per_booking, Math.round((dash.financials.net_revenue / dash.bookings.confirmed) * 100) / 100);
 
     const items = await listDonations(db, { eventId: 'evt-2026' });
     assert.deepEqual(items.map((d) => [d.amount, d.gift_aid, d.event]).sort(), [[10, false, '2026'], [5, true, '2026']]);
