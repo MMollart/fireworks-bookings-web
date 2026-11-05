@@ -8,7 +8,8 @@ const iso = (ms) => new Date(ms).toISOString();
 
 /**
  * An event with one performance at `perf` (ISO date, 19:00 UTC) and bookings generated from `daily(daysBefore)` =
- * tickets sold that day, as bookings of `size` tickets. Downloaded completely the day after the performance.
+ * tickets sold that day, as bookings of `size` tickets, at 18:45 (so sales run to the end and are not switched off).
+ * Downloaded completely the day after the performance.
  */
 function makeEvent(id, perf, days, daily, { size = 4, synced = true } = {}) {
   const start = Date.parse(`${perf}T19:00:00Z`);
@@ -17,7 +18,7 @@ function makeEvent(id, perf, days, daily, { size = 4, synced = true } = {}) {
   for (let d = days; d >= 0; d--) {
     const t = Math.round(daily(d));
     for (let left = t; left > 0; left -= size) {
-      bookings.push({ id: `${id}-${n++}`, created: iso(start - d * DAY - 3600_000), status: 'active', perf_id: `${id}-p`, event_id: id, tickets: Math.min(size, left), money: {} });
+      bookings.push({ id: `${id}-${n++}`, created: iso(start - d * DAY - 15 * 60_000), status: 'active', perf_id: `${id}-p`, event_id: id, tickets: Math.min(size, left), money: {} });
     }
   }
   return {
@@ -214,9 +215,35 @@ describe('Sell-out forecast', () => {
       // still selling at the start: not switched off
       const open = dayEvent('y24', '2024-11-05', { daily: daily(0.92), perHour: 400 });
       assert.equal(salesClosure(eventCurve(open.data), dayProfile(open.data), 10000), null);
-      // well short of capacity: not switched off, just a quiet finish
-      const quiet = dayEvent('y23', '2023-11-05', { daily: daily(0.3), perHour: 50, stopAt: 4000 });
-      assert.equal(salesClosure(eventCurve(quiet.data), dayProfile(quiet.data), 10000), null);
+      // the rule is the time of the last booking, not how many were sold: stopped at 14:00 with 4,000 is switched off
+      const early = dayEvent('y23', '2023-11-05', { daily: daily(0.3), perHour: 400, stopAt: 4000 });
+      assert.equal(salesClosure(eventCurve(early.data), dayProfile(early.data), 10000).daysBefore, 0);
+    });
+
+    test('switched off means the last booking on the day was before 18:30', () => {
+      const lastAt = (hhmm, start = '19:00') => {
+        const perf = `2025-11-05T${start}:00Z`;
+        const data = {
+          performances: [{ id: 'p', starts_at: perf, last_synced_at: '2025-11-06T12:00:00Z', scan_state: 'idle' }],
+          bookings: [
+            { id: 'a', created: '2025-11-05T10:00:00Z', perf_id: 'p', tickets: 9000, money: {} },
+            { id: 'b', created: `2025-11-05T${hhmm}:00Z`, perf_id: 'p', tickets: 4, money: {} },
+          ],
+        };
+        return salesClosure(eventCurve(data), dayProfile(data), 10000);
+      };
+      assert.ok(lastAt('18:29'));
+      assert.equal(lastAt('18:30'), null);
+      assert.equal(lastAt('18:55'), null);
+      // an earlier start: the cut-off is 30 minutes before it
+      assert.ok(lastAt('16:20', '17:00'));
+      assert.equal(lastAt('16:40', '17:00'), null);
+      // the last booking a day or more before the performance: switched off before the day
+      const before = {
+        performances: [{ id: 'p', starts_at: '2025-11-05T19:00:00Z', last_synced_at: '2025-11-06T12:00:00Z', scan_state: 'idle' }],
+        bookings: [{ id: 'a', created: '2025-11-03T20:00:00Z', perf_id: 'p', tickets: 9600, money: {} }],
+      };
+      assert.equal(salesClosure(eventCurve(before), dayProfile(before), 10000).daysBefore, 2);
     });
 
     test('a switched-off year is carried on to capacity, so it does not understate demand', () => {

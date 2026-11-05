@@ -18,9 +18,10 @@
  * forecast falls back to the recent daily pace held steady.
  *
  * SALES SWITCHED OFF EARLY. Sales are often turned off before capacity (around 9,500 of 10,000). A past year counts as
- * switched off when it sold at least CLOSED_SHARE of capacity and its last booking was more than an hour before the
- * performance. Its curve would otherwise stop rising at that point and understate demand, so the forecast always runs
- * to full capacity:
+ * switched off when its last booking was before 18:30 on the performance day (or 30 minutes before an earlier start),
+ * or on an earlier day. This year, on the day, sales count as switched off once at least CLOSED_SHARE of capacity is
+ * sold and there has been no booking for an hour. A switched-off curve would otherwise stop rising at that point and
+ * understate demand, so the forecast always runs to full capacity:
  *  - switched off on the performance day: the rest of that day is continued at the rate it was selling in the two
  *    hours before it closed (and the time it would have reached capacity is reported);
  *  - switched off on an earlier day: the curve is continued with the median growth of the years that were not.
@@ -53,8 +54,9 @@ import { eventYear } from '../lib/eventName.js';
 
 export const DEFAULT_CAPACITY = 10000;
 export const MOMENTUM_DAYS = 14;
-export const CLOSED_SHARE = 0.9; // sold at least this share of capacity and then stopped: treated as switched off
-const CLOSED_GAP_MS = 60 * 60_000; // ...with no booking in the last hour before the performance
+export const CLOSED_BY_MINUTE = 18 * 60 + 30; // a past year whose last booking was before 18:30 on the day was switched off
+export const CLOSED_SHARE = 0.9; // this year, on the day: sold at least this share of capacity...
+const CLOSED_GAP_MS = 60 * 60_000; // ...and no booking for an hour means sales have been switched off
 const CLOSING_RATE_MINUTES = 120; // closing rate measured over the two hours before sales stopped
 const SLOT = 15; // minutes per step in the performance-day profile
 const MIN_DAY_TICKETS = 50;
@@ -177,9 +179,12 @@ export function intradayShare(data, db, minute) {
 
 /** Did a past event switch sales off early? { at, tickets, daysBefore, minute?, ratePerHour?, reachesCapacityAt? } or null. */
 export function salesClosure(curve, profile, capacity) {
-  if (!profile || profile.lastMs === null || curve.totalTickets < CLOSED_SHARE * capacity) return null;
-  if (profile.lastMs >= profile.startMs - CLOSED_GAP_MS) return null;
+  if (!profile || profile.lastMs === null) return null;
   const daysBefore = londonDay(profile.startMs) - londonDay(profile.lastMs);
+  if (daysBefore < 0) return null; // still selling after the performance
+  // On the day, selling past the cut-off (18:30, or 30 minutes before an earlier start) means sales ran to the end.
+  const cutoff = Math.min(CLOSED_BY_MINUTE, profile.startMinute - 30);
+  if (daysBefore === 0 && (profile.lastMs - profile.midnight) / 60_000 >= cutoff) return null;
   const out = { at: isoAt(profile.lastMs), tickets: curve.totalTickets, daysBefore };
   if (daysBefore === 0) {
     const minute = (profile.lastMs - profile.midnight) / 60_000;
@@ -327,6 +332,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
   const base = {
     capacity,
     closedShare: CLOSED_SHARE,
+    closedBy: '18:30',
     today: dayToIso(today),
     sold,
     remaining: Math.max(0, capacity - cur.totalTickets),
