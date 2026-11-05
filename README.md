@@ -73,8 +73,9 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   with the lowest/highest as a range and "sells out in X of Y scenarios". Past years that sold out are continued past their
   sell-out point with the other years' growth. Tickets per booking (adjusted for later bookings' size in past years) turns the
   remaining tickets into bookings still needed. With no past year it falls back to the recent daily pace.
-  - **Sales switched off early:** a past year that sold at least 90% of capacity and then stopped more than an hour before the
-    performance is treated as switched off (sales are usually turned off around 9,500). The forecast always runs to full
+  - **Sales switched off early:** a past year whose last booking was before 18:30 on the performance day (or 30 minutes before an
+    earlier start), or on an earlier day, is treated as switched off (sales are usually turned off around 9,500). This year, on
+    the day, sales count as switched off once 90% of capacity is sold and there has been no booking for an hour. The forecast always runs to full
     capacity: on the performance day that year is carried on at the rate it was selling in the two hours before closing (and the
     table shows when it would have reached capacity); switched off on an earlier day, it is continued with the other years' growth.
   - **Today so far:** projections start from the end of yesterday, then today's sales up to the last download are added in:
