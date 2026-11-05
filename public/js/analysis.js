@@ -83,10 +83,10 @@
   const COLOR = { selected: '#ed5202', comparison: '#4d2176', average: '#8a7a99' };
   const MAX_BAR_CATEGORIES = 6; // more date-based categories than this are drawn as a line
 
-  let lastChart = null;
+  const drawn = new Map(); // container -> opts, redrawn on resize
 
   function renderChart(container, opts) {
-    lastChart = { container, opts };
+    drawn.set(container, opts);
     draw(container, opts);
   }
 
@@ -192,7 +192,7 @@
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (lastChart && document.body.contains(lastChart.container) && lastChart.container.offsetParent !== null) draw(lastChart.container, lastChart.opts);
+      for (const [container, opts] of drawn) if (document.body.contains(container) && container.offsetParent !== null) draw(container, opts);
     }, 150);
   });
 
@@ -259,6 +259,7 @@
 
   function showAnalysisLoading(kind) {
     $('analysisResults').style.display = 'none';
+    $('analysisDayCard').style.display = 'none';
     notices([]);
     setStatus('analysisStatus', 'loading', kind === 'compare' ? 'Loading comparison…' : kind === 'years' ? 'Loading all years…' : kind === 'forecast' ? 'Working out the forecast…' : 'Loading analysis…');
   }
@@ -537,6 +538,52 @@
   const kpi = (label, value, sub) => `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div><div class="kpi-sub">${sub}</div></div>`;
   const sellOutText = (s) => (s ? `${esc(isoDate(s.date))} <small>(${s.daysBefore === 0 ? 'performance day' : `${s.daysBefore} day${s.daysBefore === 1 ? '' : 's'} before`})</small>` : 'Not before the performance');
 
+  const clockTime = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : null);
+
+  function timeRange(t) {
+    if (!t.earliest) return '';
+    if (!t.latest) return `from ${esc(clockTime(t.earliest))}, possibly not before the start`;
+    return t.earliest === t.latest ? '' : `${esc(clockTime(t.earliest))} – ${esc(clockTime(t.latest))}`;
+  }
+
+  function closedCell(c, cap) {
+    if (!c) return '<span class="muted">No</span>';
+    const when = c.daysBefore ? `${esc(isoDate(c.at.slice(0, 10), false))} ${esc(clockTime(c.at))}` : esc(clockTime(c.at));
+    const reach = c.reachesCapacityAt ? `<br><small>${esc(num(cap))} at ~${esc(clockTime(c.reachesCapacityAt))} (${esc(num(c.ratePerHour))}/hour)</small>` : '';
+    return `${when} at ${esc(num(c.tickets))}${reach}`;
+  }
+
+  function renderDayChart(tod, cap) {
+    const card = $('analysisDayCard');
+    if (!tod) {
+      card.style.display = 'none';
+      drawn.delete($('analysisDayChart'));
+      return;
+    }
+    card.style.display = '';
+    $('analysisDayTitle').textContent = `Performance day: ${tod.basis === 'today' ? 'sales so far today and forecast' : 'forecast'} to the ${clockTime(tod.performanceStart)} start`;
+    const rows = tod.rows;
+    renderChart($('analysisDayChart'), {
+      title: 'Performance day forecast chart',
+      labels: rows.map((r) => clockTime(r.time)),
+      hatchNulls: false,
+      series: [
+        { name: 'Sold (actual)', color: COLOR.selected, values: rows.map((r) => r.actual) },
+        { name: 'Forecast', color: COLOR.comparison, values: rows.map((r) => r.central) },
+        { name: 'Forecast range (low)', color: COLOR.average, values: rows.map((r) => r.low) },
+        { name: 'Forecast range (high)', color: COLOR.average, values: rows.map((r) => r.high) },
+        { name: 'Capacity', color: '#231f20', values: rows.map(() => cap) },
+      ],
+      legend: [
+        { name: 'Sold (actual)', color: COLOR.selected },
+        { name: 'Forecast', color: COLOR.comparison },
+        { name: 'Forecast range', color: COLOR.average },
+        { name: `Capacity (${num(cap)})`, color: '#231f20' },
+      ],
+      format: (v) => num(Math.round(v)),
+    });
+  }
+
   function forecastRange(f) {
     if (!f.earliest) return '';
     const from = esc(isoDate(f.earliest.date, false));
@@ -558,6 +605,7 @@
       $('analysisTotals').innerHTML =
         soldCard +
         kpi('Sold out', data.soldOut ? (data.soldOut.date ? esc(isoDate(data.soldOut.date)) : 'Yes') : 'No', data.soldOut && data.soldOut.daysBefore !== null ? `${data.soldOut.daysBefore} days before the performance` : `Capacity ${esc(num(cap))} tickets`) +
+        (data.salesClosed ? kpi('Sales switched off', esc(clockTime(data.salesClosed.at)), closedCell(data.salesClosed, cap)) : '') +
         kpi('Tickets per booking', esc(data.sold.ticketsPerBooking ?? '-'), `${esc(num(data.sold.bookings))} bookings`);
       $('analysisChartTitle').textContent = 'Forecast';
       $('analysisChart').innerHTML = '<p class="muted">No forecast for an event that has already taken place.</p>';
@@ -581,21 +629,30 @@
     }
     note.push('The forecast is projected from the end of yesterday so a part-finished day does not skew it. Tickets include every seat on a booking (Family included seats too).');
     if (data.incompleteReferences.length) note.push(`Left out because their download is not complete: ${data.incompleteReferences.map(esc).join(', ')}.`);
-    if (data.references.some((r) => r.soldOut)) note.push('Past years that sold out stopped selling early; their curves are continued with the growth of the years that did not, so they do not understate demand.');
+    const switchedOff = data.references.filter((r) => r.closed);
+    if (switchedOff.length) {
+      note.push(
+        `Sales were switched off early in ${switchedOff.map((r) => `${esc(r.label)} (${esc(num(r.closed.tickets))} tickets at ${esc(clockTime(r.closed.at))}${r.closed.daysBefore ? `, ${r.closed.daysBefore} days before` : ''})`).join(', ')}. ` +
+          'So that they do not understate demand, those years are carried on to full capacity: on the day at the rate they were selling in the two hours before closing, otherwise with the growth of the other years.'
+      );
+    }
     if (data.undatedTickets) note.push(`${esc(num(data.undatedTickets))} ticket${data.undatedTickets === 1 ? '' : 's'} have no booking date: counted as sold but not placed on the timeline.`);
     if (data.incompleteSelected) note.push('This event\'s download is not complete, so tickets sold may be understated. Refresh its bookings first.');
     notices(note);
 
     const b = data.bookingsNeeded;
+    const tod = f.timeOfDay;
+    if (tod?.salesClosed) note.push(`Sales were switched off at ${esc(clockTime(tod.salesClosed.at))} with ${esc(num(tod.salesClosed.tickets))} tickets sold. The time shown is when ${esc(num(cap))} would have been reached at the pace sales were going.`);
+    if (tod) notices(note);
     $('analysisTotals').innerHTML = [
       soldCard,
       data.status === 'sold_out'
         ? kpi('Sold out', esc(isoDate(data.soldOut?.date)), `${data.daysToGo} days before the performance`)
         : kpi(
             'Forecast sell-out',
-            f.sellOut ? esc(isoDate(f.sellOut.date)) : f.scenarios ? 'Not forecast' : 'Unknown',
+            f.sellOut ? `${esc(isoDate(f.sellOut.date))}${tod && tod.time ? `<br>around ${esc(clockTime(tod.time))}` : ''}` : f.scenarios ? 'Not forecast' : 'Unknown',
             f.scenarios
-              ? `${f.sellOut ? `${f.sellOut.daysBefore} days before<br>` : ''}${forecastRange(f)}Sells out in ${f.selling} of ${f.scenarios} scenarios`
+              ? `${tod && tod.time && timeRange(tod) ? `Time range ${timeRange(tod)}<br>` : ''}${tod && !tod.time ? `Not forecast to reach ${esc(num(cap))} before the ${esc(clockTime(tod.performanceStart))} start<br>` : ''}${f.sellOut ? (f.sellOut.daysBefore ? `${f.sellOut.daysBefore} day${f.sellOut.daysBefore === 1 ? '' : 's'} before<br>` : 'On the performance day<br>') : ''}${forecastRange(f)}Sells out in ${f.selling} of ${f.scenarios} scenarios`
               : 'Not enough data'
           ),
       kpi('Projected final', f.projectedFinal ? esc(num(f.projectedFinal.central)) : '-', f.projectedFinal ? `Range ${esc(num(f.projectedFinal.low))} – ${esc(num(f.projectedFinal.high))} (before capacity limit)` : `Performance ${esc(isoDate(data.performanceDate))}`),
@@ -632,17 +689,19 @@
       format: (v) => num(Math.round(v)),
     });
 
+    renderDayChart(tod, cap);
+
     const scen = (s, extra = '') => (s ? `${esc(num(s.final))}${extra}<br><small>${s.sellOut ? `sells out ${esc(isoDate(s.sellOut.date, false))}` : 'no sell-out'}</small>` : '<span class="muted">-</span>');
     $('analysisTable').querySelector('thead').innerHTML =
-      `<tr><th>Past year</th><th>Tickets by this point</th><th>Share of final by this point</th><th>Final tickets</th><th>Tickets per booking (to this point / later)</th><th>Share of sales: projected final</th><th>Momentum: projected final</th></tr>`;
+      `<tr><th>Past year</th><th>Tickets by this point</th><th>Share of final by this point</th><th>Final tickets</th><th>Switched off</th><th>Tickets per booking (to this point / later)</th><th>Share of sales: projected final</th><th>Momentum: projected final</th></tr>`;
     $('analysisTable').querySelector('tbody').innerHTML = data.references.length
       ? data.references
           .map(
             (r) =>
-              `<tr><td>${esc(r.label)}${r.soldOut ? ` <span class="partial-tag" title="Reached capacity ${r.soldOut.daysBefore} days before its performance">sold out</span>` : ''}</td><td>${esc(num(r.atThisPoint))}</td><td>${pct(r.shareAtThisPoint)}</td><td>${esc(num(r.final))}</td><td>${esc(r.ticketsPerBookingAtThisPoint ?? '-')} / ${esc(r.ticketsPerBookingLater ?? '-')}</td><td>${scen(r.share)}</td><td>${scen(r.momentum, r.momentum ? ` <small>(×${esc(r.momentum.ratio)})</small>` : '')}</td></tr>`
+              `<tr><td>${esc(r.label)}</td><td>${esc(num(r.atThisPoint))}</td><td>${pct(r.shareAtThisPoint)}</td><td>${esc(num(r.final))}${r.extendedFinal > r.final ? `<br><small>would have been ~${esc(num(r.extendedFinal))}</small>` : ''}</td><td>${closedCell(r.closed, cap)}</td><td>${esc(r.ticketsPerBookingAtThisPoint ?? '-')} / ${esc(r.ticketsPerBookingLater ?? '-')}</td><td>${scen(r.share)}</td><td>${scen(r.momentum, r.momentum ? ` <small>(×${esc(r.momentum.ratio)})</small>` : '')}</td></tr>`
           )
           .join('')
-      : '<tr><td colspan="7" class="muted">No completed past year to compare with.</td></tr>';
+      : '<tr><td colspan="8" class="muted">No completed past year to compare with.</td></tr>';
     $('analysisResults').style.display = '';
   }
 

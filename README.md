@@ -72,7 +72,15 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   year did) and *momentum* (this year's last 14 days vs that year's same 14 days, scaled forward). The forecast is their median,
   with the lowest/highest as a range and "sells out in X of Y scenarios". Past years that sold out are continued past their
   sell-out point with the other years' growth. Tickets per booking (adjusted for later bookings' size in past years) turns the
-  remaining tickets into bookings still needed. With no past year it falls back to the recent daily pace (`src/analysis/forecast.js`).
+  remaining tickets into bookings still needed. With no past year it falls back to the recent daily pace.
+  - **Sales switched off early:** a past year that sold at least 90% of capacity and then stopped more than an hour before the
+    performance is treated as switched off (sales are usually turned off around 9,500). The forecast always runs to full
+    capacity: on the performance day that year is carried on at the rate it was selling in the two hours before closing (and the
+    table shows when it would have reached capacity); switched off on an earlier day, it is continued with the other years' growth.
+  - **Time of day:** when the sell-out falls on the performance day, each past year's performance-day sales by clock time
+    (15-minute steps, Europe/London) are scaled to this year to estimate the time capacity is reached, with a range and a
+    performance-day chart. On the day it uses today's sales so far (and, if sales have been switched off, when 10,000 would have
+    been reached at that pace). Bookings are downloaded every 30 minutes, so "so far" can be up to that old (`src/analysis/forecast.js`).
 - The **Overview** shows one event's figures and defaults to the latest event.
 - **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
   customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search

@@ -1,8 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { forecastSellOut, eventCurve, soldOutAt } from '../src/analysis/forecast.js';
+import { forecastSellOut, eventCurve, soldOutAt, salesClosure, dayProfile } from '../src/analysis/forecast.js';
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 const iso = (ms) => new Date(ms).toISOString();
 
 /**
@@ -107,7 +108,7 @@ describe('Sell-out forecast', () => {
     const current = makeEvent('y26', '2026-11-05', 60, (d) => (d > 30 ? shape(0.9)(d) : 0));
     const res = forecastSellOut({ events: [...past, current], selectedId: 'y26', now });
     const y24 = res.references.find((r) => r.id === 'y24');
-    assert.ok(y24.soldOut, '2024 is marked as sold out');
+    assert.ok(y24.closed && y24.closed.daysBefore > 0, '2024 is marked as switched off before the day');
     // Without the continuation 2024's share scenario would be flat after its sell-out; with it, it keeps growing.
     assert.ok(y24.share.final > res.sold.tickets * 1.2);
   });
@@ -144,4 +145,119 @@ describe('Sell-out forecast', () => {
     assert.equal(res.soldOut.daysBefore, 11);
     assert.equal(res.soldOut.date, '2025-10-25');
   });
+
+  describe('sales switched off early, and time of day', () => {
+    /**
+     * November dates are GMT, so UTC hours are London hours. Days before the performance sell `daily(d)` tickets at
+     * noon; the performance day sells `perHour` tickets an hour from 09:00, in bookings of 4, until `stopAt` tickets in
+     * total (sales switched off) or the 19:00 start. `until` (ms) cuts the download off, for "today so far".
+     */
+    function dayEvent(id, perf, { days = 60, daily, perHour, stopAt = Infinity, until = Infinity, synced = true }) {
+      const start = Date.parse(`${perf}T19:00:00Z`);
+      const bookings = [];
+      let total = 0;
+      let n = 0;
+      const add = (ms, t) => {
+        if (ms > until || total + t > stopAt) return false;
+        bookings.push({ id: `${id}-${n++}`, created: iso(ms), status: 'active', perf_id: `${id}-p`, event_id: id, tickets: t, money: {} });
+        total += t;
+        return true;
+      };
+      for (let d = days; d >= 1; d--) for (let left = Math.round(daily(d)); left > 0; left -= 4) add(start - d * DAY - 7 * HOUR, Math.min(4, left));
+      const perBooking = 4;
+      const gap = HOUR / (perHour / perBooking);
+      for (let ms = start - 10 * HOUR; ms < start - 15 * 60_000; ms += gap) if (!add(ms, perBooking)) break;
+      return {
+        id,
+        label: perf.slice(0, 4),
+        firstStart: `${perf}T19:00:00Z`,
+        data: {
+          performances: [{ id: `${id}-p`, event_id: id, starts_at: `${perf}T19:00:00Z`, last_synced_at: synced ? iso(start + DAY) : iso(until), scan_state: 'idle' }],
+          bookings,
+        },
+      };
+    }
+    const daily = (k) => (d) => k * (20 + 3000 / (d + 6));
+
+    test('a past year switched off on the day is detected, with the time it would have reached capacity', () => {
+      // ~7,500 before the day, then 400/hour from 09:00, switched off at 9,500 (about 14:00)
+      const e = dayEvent('y25', '2025-11-05', { daily: daily(0.92), perHour: 400, stopAt: 9500 });
+      const curve = eventCurve(e.data);
+      const closed = salesClosure(curve, dayProfile(e.data), 10000);
+      assert.equal(closed.daysBefore, 0);
+      assert.ok(closed.tickets <= 9500 && closed.tickets > 9400);
+      assert.ok(Math.abs(closed.ratePerHour - 400) < 20);
+      const reach = Date.parse(closed.reachesCapacityAt);
+      const expect = Date.parse(closed.at) + ((10000 - closed.tickets) / closed.ratePerHour) * HOUR;
+      assert.ok(Math.abs(reach - expect) < 2 * 60_000);
+      // still selling at the start: not switched off
+      const open = dayEvent('y24', '2024-11-05', { daily: daily(0.92), perHour: 400 });
+      assert.equal(salesClosure(eventCurve(open.data), dayProfile(open.data), 10000), null);
+      // well short of capacity: not switched off, just a quiet finish
+      const quiet = dayEvent('y23', '2023-11-05', { daily: daily(0.3), perHour: 50, stopAt: 4000 });
+      assert.equal(salesClosure(eventCurve(quiet.data), dayProfile(quiet.data), 10000), null);
+    });
+
+    test('a switched-off year is carried on to capacity, so it does not understate demand', () => {
+      const now = Date.parse('2026-10-20T12:00:00Z');
+      const past = dayEvent('y25', '2025-11-05', { daily: daily(0.92), perHour: 400, stopAt: 9500 });
+      const current = dayEvent('y26', '2026-11-05', { daily: daily(0.92), perHour: 400, until: Date.parse('2026-10-20T00:00:00Z') });
+      const res = forecastSellOut({ events: [past, current], selectedId: 'y26', now });
+      const y25 = res.references[0];
+      assert.ok(y25.closed);
+      assert.ok(y25.final <= 9500);
+      assert.ok(y25.extendedFinal > 10000, 'carried on at 400/hour to the 19:00 start');
+      // the same campaign this year is forecast to reach the full 10,000 on the day
+      assert.equal(res.forecast.sellOut.daysBefore, 0);
+      assert.ok(res.forecast.projectedFinal.central > 10000);
+    });
+
+    test('before the day: forecasts the time of day it reaches 10,000', () => {
+      const now = Date.parse('2026-10-20T12:00:00Z');
+      const past = [
+        dayEvent('y25', '2025-11-05', { daily: daily(0.92), perHour: 400, stopAt: 9500 }),
+        dayEvent('y24', '2024-11-05', { daily: daily(0.95), perHour: 380 }),
+      ];
+      const current = dayEvent('y26', '2026-11-05', { daily: daily(0.92), perHour: 400, until: Date.parse('2026-10-20T00:00:00Z') });
+      const res = forecastSellOut({ events: [...past, current], selectedId: 'y26', now });
+      const tod = res.forecast.timeOfDay;
+      assert.ok(tod, 'time of day is forecast');
+      assert.equal(tod.basis, 'projected');
+      assert.equal(tod.performanceStart, '2026-11-05T19:00:00.000Z');
+      // ~7,500 at the start of the day + ~400/hour from 09:00 reaches 10,000 mid-afternoon
+      const hour = new Date(tod.time).getUTCHours();
+      assert.ok(hour >= 13 && hour <= 18, `forecast time ${tod.time}`);
+      assert.ok(tod.earliest <= tod.time && tod.time <= (tod.latest ?? '9999'));
+      assert.equal(tod.rows[tod.rows.length - 1].time, '2026-11-05T19:00:00.000Z');
+      assert.ok(tod.rows.every((r) => r.actual === null));
+    });
+
+    test('on the day: uses sales so far today, and keeps forecasting to 10,000 after sales are switched off', () => {
+      const past = [dayEvent('y25', '2025-11-05', { daily: daily(0.92), perHour: 400, stopAt: 9500 })];
+      // This year sells faster on the day: 500/hour from 09:00
+      const atNoon = Date.parse('2026-11-05T12:00:00Z');
+      const current = dayEvent('y26', '2026-11-05', { daily: daily(0.92), perHour: 500, until: atNoon });
+      const res = forecastSellOut({ events: [...past, current], selectedId: 'y26', now: atNoon });
+      assert.equal(res.daysToGo, 0);
+      const tod = res.forecast.timeOfDay;
+      assert.equal(tod.basis, 'today');
+      const at = Date.parse(tod.time);
+      // start of day + 800/hour from 09:00
+      const startOfDay = res.sold.tickets - 3 * 500;
+      const expect = Date.parse('2026-11-05T09:00:00Z') + ((10000 - startOfDay) / 500) * HOUR;
+      assert.ok(Math.abs(at - expect) < 30 * 60_000, `forecast ${tod.time}, expected about ${iso(expect)}`);
+      assert.ok(tod.rows.some((r) => r.actual !== null));
+
+      // Switched off at 9,500 around 13:00; at 15:00 it still says when 10,000 would have been reached.
+      const later = Date.parse('2026-11-05T15:00:00Z');
+      const closedNow = dayEvent('y26', '2026-11-05', { daily: daily(0.92), perHour: 500, stopAt: 9500, until: later });
+      const res2 = forecastSellOut({ events: [...past, closedNow], selectedId: 'y26', now: later });
+      const tod2 = res2.forecast.timeOfDay;
+      assert.ok(tod2.salesClosed);
+      assert.ok(tod2.time, 'a time is still forecast for 10,000');
+      assert.ok(Date.parse(tod2.time) > Date.parse(tod2.salesClosed.at));
+      assert.ok(Date.parse(tod2.time) < Date.parse('2026-11-05T15:00:00Z'), 'at the closing pace it would have been reached before now');
+    });
+  });
 });
+

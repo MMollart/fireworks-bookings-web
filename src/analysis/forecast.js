@@ -1,11 +1,11 @@
 /**
- * Sell-out forecast: when will the selected (upcoming) event reach its ticket capacity (default 10,000)?
+ * Sell-out forecast: when will the selected (upcoming) event reach its ticket capacity (default 10,000), and at what
+ * time of day?
  *
- * Every booking is placed on a "days before its own performance" axis (Europe/London days), as in Compare events, so
- * each past year gives a cumulative ticket curve T_y(d) = tickets booked at least d days before the performance.
- *
- * The forecast is projected from the end of yesterday (the last complete day, Nb = days-to-go + 1) so a half-finished
- * today does not drag it down. For every completed past year y it builds two scenarios:
+ * DAY LEVEL. Every booking is placed on a "days before its own performance" axis (Europe/London days), as in Compare
+ * events, so each past year gives a cumulative ticket curve T_y(d) = tickets booked at least d days before the
+ * performance. The forecast is projected from the end of yesterday (the last complete day, Nb = days-to-go + 1) so a
+ * half-finished today does not drag it down. For every completed past year y it builds two scenarios:
  *
  *  - Share of sales ("curve"): this year sells the same share of its final total by each point as year y did.
  *      proj(d) = base * T_y(d) / T_y(Nb)
@@ -17,8 +17,19 @@
  * "likelihood" is how many scenarios reach capacity before the performance. With no completed past year, the
  * forecast falls back to the recent daily pace held steady.
  *
- * A past year that itself sold out has a curve that stops rising at its sell-out point, which would understate later
- * demand. Past that point its curve is continued with the median growth of the years that did not sell out.
+ * SALES SWITCHED OFF EARLY. Sales are often turned off before capacity (around 9,500 of 10,000). A past year counts as
+ * switched off when it sold at least CLOSED_SHARE of capacity and its last booking was more than an hour before the
+ * performance. Its curve would otherwise stop rising at that point and understate demand, so the forecast always runs
+ * to full capacity:
+ *  - switched off on the performance day: the rest of that day is continued at the rate it was selling in the two
+ *    hours before it closed (and the time it would have reached capacity is reported);
+ *  - switched off on an earlier day: the curve is continued with the median growth of the years that were not.
+ *
+ * TIME OF DAY. When the sell-out is forecast for the performance day, each past year's performance-day sales by clock
+ * time (Europe/London, 15-minute steps, extended at its closing rate if it was switched off) is scaled to this year:
+ *  - before the day, by the size of this year's projected total at the start of the day vs that year's;
+ *  - on the day, by this year's sales so far today vs that year's by the same time (once there are enough to go on).
+ * The time is when the projected total passes capacity: median, earliest and latest across the past years.
  *
  * Tickets per booking: the share-of-sales scenario is the same whether projected through bookings x tickets per booking
  * or through tickets directly (the two cancel), so tickets per booking is used to turn the remaining tickets into the
@@ -32,6 +43,11 @@ import { eventYear } from '../lib/eventName.js';
 
 export const DEFAULT_CAPACITY = 10000;
 export const MOMENTUM_DAYS = 14;
+export const CLOSED_SHARE = 0.9; // sold at least this share of capacity and then stopped: treated as switched off
+const CLOSED_GAP_MS = 60 * 60_000; // ...with no booking in the last hour before the performance
+const CLOSING_RATE_MINUTES = 120; // closing rate measured over the two hours before sales stopped
+const SLOT = 15; // minutes per step in the performance-day profile
+const MIN_DAY_TICKETS = 50; // on the day, below this many of a past year's tickets by "now", scale by size instead
 
 const median = (xs) => {
   const s = xs.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
@@ -40,6 +56,14 @@ const median = (xs) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 const round = (n, dp = 0) => (n === null || n === undefined ? null : Math.round(n * 10 ** dp) / 10 ** dp);
+const isoAt = (ms) => new Date(Math.round(ms / 60_000) * 60_000).toISOString();
+
+const clock = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+/** Minutes since London midnight for an epoch ms. */
+export function londonMinutes(ms) {
+  const p = Object.fromEntries(clock.formatToParts(new Date(ms)).filter((x) => x.type !== 'literal').map((x) => [x.type, Number(x.value)]));
+  return p.hour * 60 + p.minute;
+}
 
 /**
  * An event's bookings on the days-before axis. cumT[d] / cumB[d] = tickets / bookings booked at least d days before
@@ -87,21 +111,74 @@ export function soldOutAt(cum, capacity) {
 }
 
 /**
- * Continues the curves of past years that sold out, past their sell-out point, with the median growth of the years
- * that did not. Returns a function giving T_y(d) for any d >= 0.
+ * Performance-day sales by London clock time. grid[i] = tickets booked on the performance day by minute i * SLOT
+ * after midnight. Also the first performance's start, and the time of the last booking.
  */
-function curveReaders(refs, capacity) {
-  const uncapped = refs.filter((r) => r.soldOutAt === null);
+export function dayProfile(data) {
+  const meta = new Map();
+  for (const p of data.performances) {
+    const s = Date.parse(p.starts_at);
+    if (Number.isFinite(s)) meta.set(p.id, { startMs: s, day: londonDay(s), midnight: s - londonMinutes(s) * 60_000 });
+  }
+  if (!meta.size) return null;
+  const first = [...meta.values()].sort((a, b) => a.startMs - b.startMs)[0];
+  const sales = [];
+  let lastMs = null;
+  for (const b of data.bookings) {
+    const c = Date.parse(b.created);
+    if (!Number.isFinite(c)) continue;
+    if (lastMs === null || c > lastMs) lastMs = c;
+    const m = meta.get(b.perf_id);
+    if (m && londonDay(c) === m.day) sales.push({ minute: (c - m.midnight) / 60_000, tickets: b.tickets });
+  }
+  const slots = Math.ceil((24 * 60) / SLOT) + 1;
+  const grid = new Array(slots + 1).fill(0);
+  for (const s of sales) grid[Math.min(slots, Math.max(0, Math.ceil(s.minute / SLOT)))] += s.tickets;
+  for (let i = 1; i <= slots; i++) grid[i] += grid[i - 1];
+  return { startMs: first.startMs, midnight: first.midnight, startMinute: (first.startMs - first.midnight) / 60_000, grid, sales, lastMs };
+}
+
+/** Tickets booked on the performance day by minute t (linear between steps), continued at the closing rate if closed. */
+function dayTickets(profile, t, closed = null) {
+  if (closed && closed.minute !== undefined && t > closed.minute) return dayTickets(profile, closed.minute) + (closed.ratePerHour / 60) * (t - closed.minute);
+  const x = Math.max(0, t / SLOT);
+  const i = Math.floor(x);
+  if (i + 1 >= profile.grid.length) return profile.grid[profile.grid.length - 1];
+  return profile.grid[i] + (profile.grid[i + 1] - profile.grid[i]) * (x - i);
+}
+
+/** Did a past event switch sales off early? { at, tickets, daysBefore, minute?, ratePerHour?, reachesCapacityAt? } or null. */
+export function salesClosure(curve, profile, capacity) {
+  if (!profile || profile.lastMs === null || curve.totalTickets < CLOSED_SHARE * capacity) return null;
+  if (profile.lastMs >= profile.startMs - CLOSED_GAP_MS) return null;
+  const daysBefore = londonDay(profile.startMs) - londonDay(profile.lastMs);
+  const out = { at: isoAt(profile.lastMs), tickets: curve.totalTickets, daysBefore };
+  if (daysBefore === 0) {
+    const minute = (profile.lastMs - profile.midnight) / 60_000;
+    const recent = profile.sales.filter((s) => s.minute > minute - CLOSING_RATE_MINUTES && s.minute <= minute).reduce((n, s) => n + s.tickets, 0);
+    out.minute = minute;
+    out.ratePerHour = round((recent / CLOSING_RATE_MINUTES) * 60, 1);
+    out.reachesCapacityAt = out.ratePerHour > 0 && curve.totalTickets < capacity ? isoAt(profile.lastMs + ((capacity - curve.totalTickets) / out.ratePerHour) * 3_600_000) : null;
+  }
+  return out;
+}
+
+/**
+ * Continues the curves of past years whose sales were switched off before the performance day, past that point, with
+ * the median growth of the years that were not. Returns a function giving T_y(d) for any d >= 0.
+ */
+function curveReaders(refs) {
+  const open = refs.filter((r) => r.stoppedAt === null);
   return new Map(
     refs.map((r) => {
-      if (r.soldOutAt === null || uncapped.length === 0) return [r.id, (d) => at(r.curve.cumT, d)];
-      const s = r.soldOutAt;
+      if (r.stoppedAt === null || open.length === 0) return [r.id, (d) => at(r.curve.cumT, d)];
+      const s = r.stoppedAt;
       const base = at(r.curve.cumT, s);
       const growth = new Map();
       const read = (d) => {
         if (d >= s) return at(r.curve.cumT, d);
         if (!growth.has(d)) {
-          const g = median(uncapped.map((u) => (at(u.curve.cumT, s) > 0 ? at(u.curve.cumT, d) / at(u.curve.cumT, s) : NaN)));
+          const g = median(open.map((u) => (at(u.curve.cumT, s) > 0 ? at(u.curve.cumT, d) / at(u.curve.cumT, s) : NaN)));
           growth.set(d, g ?? 1);
         }
         return Math.max(at(r.curve.cumT, d), base * growth.get(d));
@@ -111,10 +188,95 @@ function curveReaders(refs, capacity) {
   );
 }
 
-/** First day (counting down from `from` to 0) a projection reaches capacity: { daysBefore } or null. */
+/** First day (counting down from `from` to 0) a projection reaches capacity, or null. */
 function sellOutDay(values, from, capacity) {
   for (let d = from; d >= 0; d--) if (values[d] >= capacity) return d;
   return null;
+}
+
+/** First minute in `times` at which a curve reaches capacity (interpolated between steps), or null. */
+function crossing(times, values, capacity) {
+  for (let i = 0; i < times.length; i++) {
+    if (values[i] === null || values[i] < capacity) continue;
+    if (i === 0 || values[i - 1] === null) return times[i];
+    const f = (capacity - values[i - 1]) / (values[i] - values[i - 1]);
+    return times[i - 1] + f * (times[i] - times[i - 1]);
+  }
+  return null;
+}
+
+/**
+ * Time of day on the performance day. scenarios: [{ ref, start }] where start = projected tickets at the start of the
+ * day (before the day) or null (on the day: actual sales so far are used).
+ */
+function performanceDayForecast({ cur, profile, scenarios, onTheDay, now, capacity }) {
+  const end = profile.startMinute;
+  let nowMinute = onTheDay ? Math.min(end, Math.max(0, (now - profile.midnight) / 60_000)) : 0;
+  let salesClosed = null;
+  if (onTheDay && profile.lastMs !== null && cur.totalTickets >= CLOSED_SHARE * capacity && profile.lastMs < now - CLOSED_GAP_MS) {
+    // This year's sales have been switched off: carry on from the moment they stopped.
+    salesClosed = { at: isoAt(profile.lastMs), tickets: cur.totalTickets };
+    nowMinute = Math.min(nowMinute, Math.max(0, (profile.lastMs - profile.midnight) / 60_000));
+  }
+  const times = [];
+  for (let t = Math.ceil(nowMinute / SLOT) * SLOT; t < end; t += SLOT) times.push(t);
+  times.push(end);
+  if (onTheDay && times[0] !== nowMinute) times.unshift(nowMinute);
+
+  const startOfDay = cur.undatedTickets + at(cur.cumT, 1);
+  const soFar = dayTickets(profile, nowMinute); // this year's performance-day tickets by "now"
+  const curves = [];
+  for (const s of scenarios) {
+    const r = s.ref;
+    const D = (t) => dayTickets(r.profile, t, r.closed);
+    const tY = at(r.curve.cumT, 1) + r.curve.undatedTickets;
+    if (!(D(end) > 0) || !(tY > 0)) continue;
+    let values;
+    if (onTheDay) {
+      const Dn = D(nowMinute);
+      const k = Dn >= MIN_DAY_TICKETS ? soFar / Dn : startOfDay / tY;
+      values = times.map((t) => Math.max(cur.totalTickets, cur.totalTickets + k * (D(t) - Dn)));
+    } else {
+      const k = s.start / tY;
+      values = times.map((t) => s.start + k * D(t));
+    }
+    curves.push({ ref: r, values, minute: crossing(times, values, capacity) });
+  }
+  if (!curves.length) return null;
+
+  const pointwise = (fn) => times.map((_, i) => fn(curves.map((c) => c.values[i])));
+  const central = pointwise(median);
+  const low = pointwise((xs) => Math.min(...xs));
+  const high = pointwise((xs) => Math.max(...xs));
+  const when = (m) => (m === null ? null : isoAt(profile.midnight + m * 60_000));
+
+  // Chart rows for the performance day: actual so far (on the day), then the forecast to the performance.
+  const rows = [];
+  const lastActual = onTheDay ? nowMinute : -1;
+  for (let t = 0; t < end; t += SLOT) {
+    if (t <= lastActual && !times.includes(t)) rows.push({ time: when(t), actual: Math.round(startOfDay + dayTickets(profile, t)), central: null, low: null, high: null });
+  }
+  times.forEach((t, i) => {
+    rows.push({
+      time: when(t),
+      actual: onTheDay && t <= lastActual ? Math.round(startOfDay + dayTickets(profile, t)) : null,
+      central: Math.round(central[i]),
+      low: Math.round(low[i]),
+      high: Math.round(high[i]),
+    });
+  });
+
+  return {
+    basis: onTheDay ? 'today' : 'projected',
+    performanceStart: isoAt(profile.startMs),
+    time: when(crossing(times, central, capacity)),
+    earliest: when(crossing(times, high, capacity)),
+    latest: when(crossing(times, low, capacity)),
+    selling: curves.filter((c) => c.minute !== null).length,
+    pastYears: curves.length,
+    salesClosed,
+    rows,
+  };
 }
 
 /**
@@ -136,6 +298,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
   };
   const base = {
     capacity,
+    closedShare: CLOSED_SHARE,
     today: dayToIso(today),
     sold,
     remaining: Math.max(0, capacity - cur.totalTickets),
@@ -155,6 +318,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       status: lastPerf === null ? 'no_date' : 'past',
       performanceDate: lastPerf === null ? null : dayToIso(lastPerf),
       soldOut: cur.totalTickets >= capacity ? soldOutDate(cur, lastPerf) ?? { date: null, daysBefore: null } : null,
+      salesClosed: salesClosure(cur, dayProfile(target.data), capacity),
       references: [],
       rows: [],
     };
@@ -175,20 +339,28 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
   };
 
   // Completed past years: every performance before today and fully downloaded.
-  const candidates = events.filter((e) => e.id !== selectedId);
   const incomplete = [];
   const refs = [];
-  for (const e of candidates) {
+  for (const e of events.filter((x) => x.id !== selectedId)) {
     const curve = eventCurve(e.data);
     if (!curve.hasDated || !curve.perfDays.length || Math.max(...curve.perfDays) >= today) continue;
     if (e.data.performances.some((p) => !isComplete(p))) {
       incomplete.push(e.label);
       continue;
     }
-    refs.push({ id: e.id, label: e.label, year: eventYear(e.firstStart), curve, soldOutAt: soldOutAt(curve.cumT, capacity - curve.undatedTickets) });
+    const profile = dayProfile(e.data);
+    const closed = salesClosure(curve, profile, capacity);
+    const soldDated = at(curve.cumT, 0); // actual tickets, before any extension
+    if (closed && closed.daysBefore === 0 && closed.ratePerHour > 0) {
+      // Switched off on the day: carry the rest of the day on at the closing rate, so its final total is what it would
+      // have sold rather than where it was stopped.
+      curve.cumT = [...curve.cumT];
+      curve.cumT[0] = at(curve.cumT, 1) + dayTickets(profile, profile.startMinute, closed);
+    }
+    refs.push({ id: e.id, label: e.label, year: eventYear(e.firstStart), curve, profile, closed, soldDated, stoppedAt: closed && closed.daysBefore > 0 ? closed.daysBefore : null });
   }
   refs.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-  const readers = curveReaders(refs, capacity);
+  const readers = curveReaders(refs);
 
   const baseT = at(cur.cumT, Nb); // dated tickets up to the end of yesterday
   const recentT = baseT - at(cur.cumT, Nb + MOMENTUM_DAYS);
@@ -202,7 +374,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     const window = tAt - T(Nb + MOMENTUM_DAYS);
     const bAt = at(r.curve.cumB, Nb);
     const finalT = r.curve.totalTickets;
-    const lateT = at(r.curve.cumT, 0) - at(r.curve.cumT, Nb);
+    const lateT = r.soldDated - at(r.curve.cumT, Nb);
     const lateB = at(r.curve.cumB, 0) - bAt;
     const project = (fn) => {
       const values = [];
@@ -214,12 +386,13 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       label: r.label,
       year: r.year,
       final: finalT,
+      extendedFinal: Math.round(r.curve.undatedTickets + T(0)),
       atThisPoint: r.curve.undatedTickets + at(r.curve.cumT, Nb),
       shareAtThisPoint: finalT ? round((r.curve.undatedTickets + at(r.curve.cumT, Nb)) / finalT, 4) : null,
       sameWindow: round(window, 2),
       ticketsPerBookingAtThisPoint: bAt ? round(at(r.curve.cumT, Nb) / bAt, 2) : null,
       ticketsPerBookingLater: lateB ? round(lateT / lateB, 2) : null,
-      soldOut: r.soldOutAt === null ? null : { daysBefore: r.soldOutAt },
+      closed: r.closed ? { at: r.closed.at, tickets: r.closed.tickets, daysBefore: r.closed.daysBefore, ratePerHour: r.closed.ratePerHour ?? null, reachesCapacityAt: r.closed.reachesCapacityAt ?? null } : null,
       share: null,
       momentum: null,
     };
@@ -227,14 +400,14 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       const values = project((d) => (baseT * T(d)) / tAt);
       const sd = sellOutDay(values, N, capacity);
       out.share = { final: Math.round(values[0]), sellOut: sd === null ? null : { date: dayToIso(perfDay - sd), daysBefore: sd } };
-      scenarios.push({ values, sellOut: sd });
+      scenarios.push({ ref: r, values, sellOut: sd });
     }
     if (window > 0) {
       const k = recentT / window;
       const values = project((d) => baseT + k * (T(d) - tAt));
       const sd = sellOutDay(values, N, capacity);
       out.momentum = { final: Math.round(values[0]), ratio: round(k, 2), sellOut: sd === null ? null : { date: dayToIso(perfDay - sd), daysBefore: sd } };
-      scenarios.push({ values, sellOut: sd });
+      scenarios.push({ ref: r, values, sellOut: sd });
     }
     return out;
   });
@@ -247,7 +420,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     if (rate > 0) {
       const values = [];
       for (let d = 0; d <= N; d++) values[d] = Math.max(floor, offset + baseT + rate * (Nb - d));
-      scenarios.push({ values, sellOut: sellOutDay(values, N, capacity) });
+      scenarios.push({ ref: null, values, sellOut: sellOutDay(values, N, capacity) });
     }
   }
 
@@ -270,7 +443,16 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     latest: alreadySoldOut || !low ? null : dateOf(sellOutDay(low, N, capacity)),
     selling: scenarios.filter((s) => s.sellOut !== null).length,
     projectedFinal: central ? { central: Math.round(central[0]), low: Math.round(low[0]), high: Math.round(high[0]) } : null,
+    timeOfDay: null,
   };
+
+  // Time of day, when the sell-out falls on the performance day (or the performance is today).
+  const profile = dayProfile(target.data);
+  if (!alreadySoldOut && profile && method === 'history' && (N === 0 || forecast.sellOut?.daysBefore === 0)) {
+    const dayScenarios =
+      N === 0 ? refs.filter((r) => r.profile).map((r) => ({ ref: r, start: null })) : scenarios.filter((s) => s.ref && s.ref.profile).map((s) => ({ ref: s.ref, start: s.values[1] }));
+    forecast.timeOfDay = performanceDayForecast({ cur, profile, scenarios: dayScenarios, onTheDay: N === 0, now, capacity });
+  }
 
   // Tickets per booking: later bookings tend to differ in size from earlier ones; carry past years' ratio forward.
   const tpbNow = baseT && at(cur.cumB, Nb) ? baseT / at(cur.cumB, Nb) : sold.ticketsPerBooking;
