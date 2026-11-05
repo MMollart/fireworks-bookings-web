@@ -72,6 +72,27 @@ describe('Sell-out forecast', () => {
     assert.equal(res.rows.find((r) => r.daysBefore === 30).actual, res.sold.tickets);
   });
 
+  test('pace learns the late surge from past years', () => {
+    const now = Date.parse('2026-10-06T12:00:00Z'); // 30 days to go
+    const past = [makeEvent('y24', '2024-11-05', 60, shape(0.5)), makeEvent('y25', '2025-11-05', 60, shape(0.5))];
+    const current = makeEvent('y26', '2026-11-05', 60, (d) => (d > 30 ? shape(0.55)(d) : 0)); // 10% ahead
+    const res = forecastSellOut({ events: [...past, current], selectedId: 'y26', now });
+    const p = res.pace;
+    assert.ok(Math.abs(p.vsPast - 0.1) < 0.03, `vsPast ${p.vsPast}`);
+    // shape: 6000/(d+6) a day, so the final days sell ~4x the pace of a month out
+    assert.ok(p.pastUptick > 3, `uptick ${p.pastUptick}`);
+    assert.ok(p.expectedFinal.perDay > 3 * p.last7);
+    assert.ok(p.expectedNext7.perDay > p.last7);
+    assert.equal(p.expectedFinal.days, 3);
+    // daily rows: actual before today, forecast from today; the forecast days add up to the projected final
+    const fc = res.rows.filter((r) => r.dailyCentral !== null);
+    assert.equal(fc.length, 31);
+    assert.ok(res.rows.find((r) => r.daysBefore === 40).dailyActual > 0);
+    const startOfToday = res.sold.tickets - p.today;
+    const sum = fc.reduce((n, r) => n + r.dailyCentral, 0);
+    assert.ok(Math.abs(startOfToday + sum - res.forecast.projectedFinal.central) < 40);
+  });
+
   test('a slow year does not sell out, and the projected final is below capacity', () => {
     const now = Date.parse('2026-10-06T12:00:00Z');
     const past = [makeEvent('y24', '2024-11-05', 60, shape(0.45)), makeEvent('y25', '2025-11-05', 60, shape(0.5))];

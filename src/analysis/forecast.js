@@ -31,6 +31,11 @@
  *  - on the day, by this year's sales so far today vs that year's by the same time (once there are enough to go on).
  * The time is when the projected total passes capacity: median, earliest and latest across the past years.
  *
+ * PACE. Recent pace (tickets a day over the last 7 / 14 complete days) is compared with past years over the same 7
+ * days before their performance, and the forecast gives the expected pace ahead (next 7 days, final 3 days), so the
+ * late surge every year has is expected rather than read as falling behind. Daily figures per scenario feed the
+ * tickets-per-day chart view.
+ *
  * Tickets per booking: the share-of-sales scenario is the same whether projected through bookings x tickets per booking
  * or through tickets directly (the two cancel), so tickets per booking is used to turn the remaining tickets into the
  * number of bookings still needed, allowing for later bookings being larger or smaller as they were in past years.
@@ -392,6 +397,8 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       sameWindow: round(window, 2),
       ticketsPerBookingAtThisPoint: bAt ? round(at(r.curve.cumT, Nb) / bAt, 2) : null,
       ticketsPerBookingLater: lateB ? round(lateT / lateB, 2) : null,
+      paceAtThisPoint: round((tAt - T(Nb + 7)) / 7, 1),
+      paceFinalDays: round((T(0) - T(Math.min(3, Nb))) / Math.min(3, Nb), 1),
       closed: r.closed ? { at: r.closed.at, tickets: r.closed.tickets, daysBefore: r.closed.daysBefore, ratePerHour: r.closed.ratePerHour ?? null, reachesCapacityAt: r.closed.reachesCapacityAt ?? null } : null,
       share: null,
       momentum: null,
@@ -454,6 +461,31 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     forecast.timeOfDay = performanceDayForecast({ cur, profile, scenarios: dayScenarios, onTheDay: N === 0, now, capacity });
   }
 
+  // Pace, learned from past years: how this year's last week compares with theirs, and what the forecast expects ahead.
+  const startT = offset + baseT; // end of yesterday
+  const daily = scenarios.map((sc) => {
+    const v = [];
+    for (let d = 0; d <= N; d++) v[d] = sc.values[d] - (d === N ? startT : sc.values[d + 1]);
+    return v;
+  });
+  const dailyAt = (fn) => (daily.length ? Array.from({ length: N + 1 }, (_, d) => fn(daily.map((v) => v[d]))) : null);
+  const dailyCentral = dailyAt(median);
+  const dailyLow = dailyAt((xs) => Math.min(...xs));
+  const dailyHigh = dailyAt((xs) => Math.max(...xs));
+  const pastSameWeek = median(references.map((r) => r.paceAtThisPoint));
+  pace.pastSameWeek = round(pastSameWeek, 1);
+  pace.vsPast = pastSameWeek ? round(pace.last7 / pastSameWeek - 1, 3) : null;
+  pace.pastUptick = round(median(references.map((r) => (r.paceAtThisPoint > 0 ? r.paceFinalDays / r.paceAtThisPoint : NaN))), 1);
+  if (central) {
+    const k7 = Math.min(7, N + 1);
+    const k3 = Math.min(3, N + 1);
+    pace.expectedNext7 = { days: k7, perDay: round((central[N - k7 + 1] - startT) / k7, 1) };
+    pace.expectedFinal = { days: k3, perDay: round((central[0] - (k3 === N + 1 ? startT : central[k3])) / k3, 1) };
+  } else {
+    pace.expectedNext7 = null;
+    pace.expectedFinal = null;
+  }
+
   // Tickets per booking: later bookings tend to differ in size from earlier ones; carry past years' ratio forward.
   const tpbNow = baseT && at(cur.cumB, Nb) ? baseT / at(cur.cumB, Nb) : sold.ticketsPerBooking;
   const lateRatio = median(references.map((r) => (r.ticketsPerBookingAtThisPoint && r.ticketsPerBookingLater ? r.ticketsPerBookingLater / r.ticketsPerBookingAtThisPoint : NaN)));
@@ -476,6 +508,10 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       central: central && d <= N ? Math.round(central[d]) : null,
       low: low && d <= N ? Math.round(low[d]) : null,
       high: high && d <= N ? Math.round(high[d]) : null,
+      dailyActual: d > N ? at(cur.cumT, d) - at(cur.cumT, d + 1) : d === N ? pace.today : null,
+      dailyCentral: dailyCentral && d <= N ? Math.round(dailyCentral[d]) : null,
+      dailyLow: dailyLow && d <= N ? Math.round(dailyLow[d]) : null,
+      dailyHigh: dailyHigh && d <= N ? Math.round(dailyHigh[d]) : null,
     });
   }
 
