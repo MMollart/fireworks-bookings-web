@@ -75,7 +75,7 @@
   function niceMax(v) {
     if (v <= 0) return 1;
     const pow = Math.pow(10, Math.floor(Math.log10(v)));
-    for (const m of [1, 2, 2.5, 5, 10]) if (m * pow >= v) return m * pow;
+    for (const m of [1, 1.2, 1.6, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * pow >= v) return m * pow; // a quarter of each is a round number
     return 10 * pow;
   }
 
@@ -88,6 +88,12 @@
   function renderChart(container, opts) {
     drawn.set(container, opts);
     draw(container, opts);
+    // Drawn while hidden (no width to measure)? Redraw at the real size once it is on screen.
+    if (!container.getBoundingClientRect().width) {
+      requestAnimationFrame(() => {
+        if (drawn.get(container) === opts && container.getBoundingClientRect().width) draw(container, opts);
+      });
+    }
   }
 
   function draw(container, { labels, series, format, title, forceBar = false, legend: legendItems = null, hatchNulls = true }) {
@@ -556,9 +562,9 @@
     } else {
       lines.push(`Last 14 days: ${esc(num(p.last14))}/day`);
     }
-    if (p.expectedNext7) lines.push(`Expected next ${days(p.expectedNext7.days)}: <strong>${esc(num(p.expectedNext7.perDay))}/day</strong>`);
+    if (p.expectedNext7) lines.push(`Expected from now, next ${days(p.expectedNext7.days)}${p.expectedNext7.days === daysToGo + 1 ? ' (to the performance)' : ''}: <strong>${esc(num(p.expectedNext7.perDay))}/day</strong>`);
     if (p.expectedFinal && daysToGo >= 3) lines.push(`Expected final ${days(p.expectedFinal.days)}: <strong>${esc(num(p.expectedFinal.perDay))}/day</strong>${p.pastUptick ? ` (past years ×${esc(num(p.pastUptick))} their pace now)` : ''}`);
-    lines.push(`Needed to sell out: ${esc(num(p.required))}/day on average over ${days(daysToGo + 1)}`);
+    lines.push(`Needed from now to sell out: ${esc(num(p.required))}/day over ${days(daysToGo + 1)}`);
     return kpi('Recent pace', `${esc(num(p.last7))}<small>/day</small>`, `Last 7 days<br>${lines.join('<br>')}`);
   }
 
@@ -643,7 +649,12 @@
     } else {
       note.push('There are no recent sales and no completed past years to forecast from.');
     }
-    note.push('The forecast is projected from the end of yesterday so a part-finished day does not skew it. Tickets include every seat on a booking (Family included seats too).');
+    const ta = f.todayAdjust;
+    note.push(
+      ta
+        ? `Today so far: ${esc(num(ta.soFar))} tickets by ${esc(clockTime(ta.asOf))}. In past years about ${Math.round(ta.typicalShare * 100)}% of this day's sales were in by then, so today looks like about ${esc(num(ta.estimatedToday))} in total; the forecast carries that forward${ta.weight < 1 ? ` (only partly so far, as it is early in the day)` : ''}. Tickets include every seat on a booking (Family included seats too).`
+        : 'The forecast is projected from the end of yesterday; today\'s sales are added in once enough of the day has passed to judge them. Tickets include every seat on a booking (Family included seats too).'
+    );
     if (data.incompleteReferences.length) note.push(`Left out because their download is not complete: ${data.incompleteReferences.map(esc).join(', ')}.`);
     const switchedOff = data.references.filter((r) => r.closed);
     if (switchedOff.length) {
@@ -680,7 +691,9 @@
       ),
     ].join('');
 
-    // chart: cumulative tickets (or tickets per day), actual then forecast, with range (and capacity line)
+    // chart: cumulative tickets (or tickets per day), actual then forecast, with range (and capacity line).
+    // Shown before drawing: a hidden chart cannot measure its width and would be drawn small, then stretched.
+    $('analysisResults').style.display = '';
     const rows = data.rows;
     const labels = rows.map((r) => isoDate(r.date, false));
     if ($('forecastView').value === 'daily') {
