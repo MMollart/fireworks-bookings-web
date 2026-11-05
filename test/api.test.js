@@ -241,6 +241,8 @@ describe('HTTP API & Authentication Integration Tests', () => {
     assert.equal((await call('GET', '/api/analysis/sales', { cookie: viewerCookie })).status, 400);
     assert.equal((await call('GET', '/api/analysis/sales?eventId=nope&group=daily', { cookie: viewerCookie })).status, 400);
     assert.equal((await call('GET', '/api/analysis/compare?eventId=a&compareEventId=a', { cookie: viewerCookie })).status, 400);
+    assert.equal((await call('GET', '/api/analysis/forecast', { cookie: viewerCookie })).status, 400);
+    assert.equal((await call('GET', '/api/analysis/forecast?eventId=nope', { cookie: viewerCookie })).status, 400);
     assert.equal((await call('GET', '/api/analysis/discounts?scope=bogus', { cookie: viewerCookie })).status, 400);
     const years = await call('GET', '/api/analysis/discounts?scope=years', { cookie: viewerCookie });
     assert.equal(years.status, 200);

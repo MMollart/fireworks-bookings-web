@@ -10,6 +10,7 @@ import { londonDay, dayToIso, periodOf, weekStart } from '../src/analysis/time.j
 import { loadBookings, loadBookingsByEvent } from '../src/analysis/data.js';
 import { salesOverTime } from '../src/analysis/sales.js';
 import { compareEvents } from '../src/analysis/compare.js';
+import { forecastSellOut } from '../src/analysis/forecast.js';
 import { loadCodeLines, summariseDiscounts, normaliseCode } from '../src/analysis/discounts.js';
 
 const NOW = Date.parse('2026-11-20T12:00:00Z');
@@ -232,6 +233,26 @@ describe('Analysis', () => {
         assert.deepEqual(sortById(byEvent.get(id).bookings), sortById(one.bookings));
         assert.deepEqual(byEvent.get(id).performances, one.performances);
       }
+    });
+
+    test('sell-out forecast from downloaded data: past years drive the projection, undated bookings count as sold', async () => {
+      const byEvent = await loadBookingsByEvent(db);
+      const events = [
+        { id: 'evt-a', label: '2026', firstStart: '2026-11-07T19:00:00Z', data: byEvent.get('evt-a') },
+        { id: 'evt-b', label: '2025', firstStart: '2025-11-08T19:00:00Z', data: byEvent.get('evt-b') },
+        { id: 'evt-c', label: '2024', firstStart: '2024-11-02T19:00:00Z', data: byEvent.get('evt-c') },
+      ];
+      // 5 days before the 2026 performance: 2 dated tickets so far (10 days out) + 1 undated; booking 2 is "in the future".
+      const now = Date.parse('2026-11-02T12:00:00Z');
+      const out = forecastSellOut({ events, selectedId: 'evt-a', capacity: 10, now });
+      assert.equal(out.status, 'forecast');
+      assert.equal(out.daysToGo, 5);
+      assert.equal(out.undatedTickets, 1);
+      assert.deepEqual(out.references.map((r) => r.label), ['2025', '2024']);
+      // 2025 had 3 of its 7 tickets by this point: share of sales projects 2 * 7/3 + 1 undated
+      const y25 = out.references.find((r) => r.label === '2025');
+      assert.equal(y25.atThisPoint, 3);
+      assert.equal(y25.share.final, Math.round(2 * (7 / 3) + 1));
     });
 
     test('bands past the download are No data, not zero', async () => {

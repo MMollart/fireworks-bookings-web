@@ -66,6 +66,13 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
 - Events are labelled by the year of the performance only ("2026"), in tables and charts alike.
 - No price per ticket is assumed (TicketSource only gives booking totals), so ticket reports show counts. Donations (`DONATION` booking lines, with Gift Aid) are reported separately from ticket revenue.
 - Analysis > **All years** compares every event as bars (earliest to latest), for all sales or to the equivalent date in the sales cycle. Every table sorts by clicking a column header; users can change their own password; admins can delete accounts.
+- Analysis > **Sell-out forecast** predicts when an upcoming event reaches its capacity (default 10,000 tickets, editable).
+  Bookings are aligned on days before their performance; each completed, fully downloaded past year gives two scenarios
+  projected from the end of yesterday: *share of sales* (this year sells the same share of its final total from here as that
+  year did) and *momentum* (this year's last 14 days vs that year's same 14 days, scaled forward). The forecast is their median,
+  with the lowest/highest as a range and "sells out in X of Y scenarios". Past years that sold out are continued past their
+  sell-out point with the other years' growth. Tickets per booking (adjusted for later bookings' size in past years) turns the
+  remaining tickets into bookings still needed. With no past year it falls back to the recent daily pace (`src/analysis/forecast.js`).
 - The **Overview** shows one event's figures and defaults to the latest event.
 - **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
   customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search

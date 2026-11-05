@@ -5,6 +5,7 @@ import { salesOverTime, GROUPS } from '../analysis/sales.js';
 import { compareEvents, COMPARE_GROUPS } from '../analysis/compare.js';
 import { loadCodeLines, summariseDiscounts } from '../analysis/discounts.js';
 import { yearlyTotals } from '../analysis/years.js';
+import { forecastSellOut, DEFAULT_CAPACITY } from '../analysis/forecast.js';
 import { eventState } from '../ticketsource/events.js';
 
 async function requireEvent(db, id) {
@@ -100,6 +101,27 @@ export function analysisRoutes() {
       list.push({ id: e.id, label: e.name, firstStart: e.first_start, data: await loadBookings(db, { eventId: e.id }) });
     }
     return c.json({ scope: { eventId }, ...yearlyTotals({ events: list, selectedId: eventId, mode }) });
+  });
+
+  // Sell-out forecast for an upcoming event, from past years' sales curves, recent momentum and tickets per booking.
+  r.get('/forecast', async (c) => {
+    const db = c.get('db');
+    const { eventId, capacity } = c.req.query();
+    if (!(await requireEvent(db, eventId))) return c.json({ error: 'Choose an event' }, 400);
+    let cap = DEFAULT_CAPACITY;
+    if (capacity !== undefined && capacity !== '') {
+      cap = Number(capacity);
+      if (!Number.isInteger(cap) || cap < 1) return c.json({ error: 'Capacity must be a whole number of tickets, 1 or more' }, 400);
+    }
+
+    const { events } = await loadScopeOptions(db);
+    const byEvent = await loadBookingsByEvent(db);
+    const list = events
+      .filter((e) => byEvent.has(e.id) || e.id === eventId)
+      .map((e) => ({ id: e.id, label: e.name, firstStart: e.first_start, data: byEvent.get(e.id) }));
+    const selected = list.find((e) => e.id === eventId);
+    if (!selected.data) selected.data = await loadBookings(db, { eventId });
+    return c.json({ scope: { eventId }, ...forecastSellOut({ events: list, selectedId: eventId, capacity: cap }) });
   });
 
   // Discount codes: scope=event (needs eventId) or scope=years (all events, grouped by performance year).
