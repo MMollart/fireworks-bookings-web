@@ -556,9 +556,9 @@
     } else {
       lines.push(`Last 14 days: ${esc(num(p.last14))}/day`);
     }
-    if (p.expectedNext7) lines.push(`Expected next ${days(p.expectedNext7.days)}: <strong>${esc(num(p.expectedNext7.perDay))}/day</strong>`);
+    if (p.expectedNext7) lines.push(`Expected from now, next ${days(p.expectedNext7.days)}${p.expectedNext7.days === daysToGo + 1 ? ' (to the performance)' : ''}: <strong>${esc(num(p.expectedNext7.perDay))}/day</strong>`);
     if (p.expectedFinal && daysToGo >= 3) lines.push(`Expected final ${days(p.expectedFinal.days)}: <strong>${esc(num(p.expectedFinal.perDay))}/day</strong>${p.pastUptick ? ` (past years ×${esc(num(p.pastUptick))} their pace now)` : ''}`);
-    lines.push(`Needed to sell out: ${esc(num(p.required))}/day on average over ${days(daysToGo + 1)}`);
+    lines.push(`Needed from now to sell out: ${esc(num(p.required))}/day over ${days(daysToGo + 1)}`);
     return kpi('Recent pace', `${esc(num(p.last7))}<small>/day</small>`, `Last 7 days<br>${lines.join('<br>')}`);
   }
 
@@ -643,7 +643,12 @@
     } else {
       note.push('There are no recent sales and no completed past years to forecast from.');
     }
-    note.push('The forecast is projected from the end of yesterday so a part-finished day does not skew it. Tickets include every seat on a booking (Family included seats too).');
+    const ta = f.todayAdjust;
+    note.push(
+      ta
+        ? `Today so far: ${esc(num(ta.soFar))} tickets by ${esc(clockTime(ta.asOf))}. In past years about ${Math.round(ta.typicalShare * 100)}% of this day's sales were in by then, so today looks like about ${esc(num(ta.estimatedToday))} in total; the forecast carries that forward${ta.weight < 1 ? ` (only partly so far, as it is early in the day)` : ''}. Tickets include every seat on a booking (Family included seats too).`
+        : 'The forecast is projected from the end of yesterday; today\'s sales are added in once enough of the day has passed to judge them. Tickets include every seat on a booking (Family included seats too).'
+    );
     if (data.incompleteReferences.length) note.push(`Left out because their download is not complete: ${data.incompleteReferences.map(esc).join(', ')}.`);
     const switchedOff = data.references.filter((r) => r.closed);
     if (switchedOff.length) {

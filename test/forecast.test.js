@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { forecastSellOut, eventCurve, soldOutAt, salesClosure, dayProfile } from '../src/analysis/forecast.js';
+import { forecastSellOut, eventCurve, soldOutAt, salesClosure, dayProfile, intradayShare } from '../src/analysis/forecast.js';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -278,6 +278,69 @@ describe('Sell-out forecast', () => {
       assert.ok(tod2.time, 'a time is still forecast for 10,000');
       assert.ok(Date.parse(tod2.time) > Date.parse(tod2.salesClosed.at));
       assert.ok(Date.parse(tod2.time) < Date.parse('2026-11-05T15:00:00Z'), 'at the closing pace it would have been reached before now');
+    });
+  });
+
+  describe('today so far, and pace measured from now', () => {
+    // Bookings spread evenly 08:00-18:30 each day (GMT = London in November). `today(d)` overrides this year's day.
+    const real = [2730, 1501, 855, 925, 442, 462, 448, 290, 207, 138, 115];
+    const base = (d) => (d < real.length ? real[d] : Math.round(115 * Math.pow(0.93, d - 10)));
+    function spread(id, perf, daily, until = Infinity, synced = true) {
+      const start = Date.parse(`${perf}T19:00:00Z`);
+      const bookings = [];
+      let n = 0;
+      for (let d = 60; d >= 0; d--) {
+        const t0 = start - d * DAY - 11 * HOUR;
+        const k = Math.ceil(daily(d) / 3);
+        let left = daily(d);
+        for (let i = 0; i < k; i++) {
+          const ms = t0 + (i / k) * 10.5 * HOUR;
+          if (ms > until) break;
+          bookings.push({ id: `${id}-${n++}`, created: iso(ms), perf_id: `${id}-p`, tickets: Math.min(3, left), money: {} });
+          left -= 3;
+        }
+      }
+      const sync = until === Infinity ? start + DAY : until;
+      return { id, label: perf.slice(0, 4), firstStart: `${perf}T19:00:00Z`, data: { performances: [{ id: `${id}-p`, starts_at: `${perf}T19:00:00Z`, last_synced_at: synced ? iso(sync) : null, scan_state: 'idle' }], bookings } };
+    }
+    const past = () => [spread('y25', '2025-11-08', base), spread('y24', '2024-11-02', (d) => Math.round(base(d) * 0.95))];
+
+    test('intraday share: how much of a day had sold by a time of day', () => {
+      const e = spread('y25', '2025-11-08', base);
+      assert.ok(Math.abs(intradayShare(e.data, 3, 13 * 60 + 15) - 0.5) < 0.03); // half way through 08:00-18:30
+      assert.equal(intradayShare(e.data, 3, 7 * 60), 0);
+    });
+
+    test('expected and needed pace are both measured from now, and agree with the verdict', () => {
+      const now = Date.parse('2026-11-04T15:00:00Z'); // 3 days before Sat 7 Nov
+      const current = spread('y26', '2026-11-07', (d) => Math.round(base(d) * 1.05), now);
+      const res = forecastSellOut({ events: [...past(), current], selectedId: 'y26', now });
+      const p = res.pace;
+      assert.equal(res.daysToGo, 3);
+      // over the whole remaining period (today included) expected = (projected final - sold) / days
+      const whole = p.expectedNext7.days === res.daysToGo + 1;
+      assert.ok(whole);
+      assert.ok(Math.abs(p.expectedNext7.perDay - (res.forecast.projectedFinal.central - res.sold.tickets) / 4) < 0.6);
+      assert.equal(p.expectedNext7.perDay >= p.required, res.forecast.sellOut !== null);
+    });
+
+    test("a strong day so far lifts the forecast; the adjustment is reported", () => {
+      const now = Date.parse('2026-11-04T15:00:00Z'); // 3 days before; 08:00-15:00 is two thirds of the selling day
+      const normal = spread('y26', '2026-11-07', base, now);
+      const strong = spread('y26', '2026-11-07', (d) => (d === 3 ? base(d) * 2 : base(d)), now);
+      const a = forecastSellOut({ events: [...past(), normal], selectedId: 'y26', now });
+      const b = forecastSellOut({ events: [...past(), strong], selectedId: 'y26', now });
+      assert.ok(a.forecast.todayAdjust);
+      assert.ok(Math.abs(a.forecast.todayAdjust.typicalShare - 0.67) < 0.05);
+      assert.ok(Math.abs(a.forecast.todayAdjust.estimatedToday - 925) < 60);
+      assert.equal(a.forecast.todayAdjust.weight, 1);
+      // twice today's usual pace adds about one extra day-3's worth to the final total
+      const extra = b.forecast.projectedFinal.central - a.forecast.projectedFinal.central;
+      assert.ok(extra > 700 && extra < 1100, `extra ${extra}`);
+      // early in the morning there is too little of the day to go on
+      const early = Date.parse('2026-11-04T08:30:00Z');
+      const c = forecastSellOut({ events: [...past(), spread('y26', '2026-11-07', base, early)], selectedId: 'y26', now: early });
+      assert.equal(c.forecast.todayAdjust, null);
     });
   });
 });

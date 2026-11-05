@@ -31,6 +31,11 @@
  *  - on the day, by this year's sales so far today vs that year's by the same time (once there are enough to go on).
  * The time is when the projected total passes capacity: median, earliest and latest across the past years.
  *
+ * TODAY SO FAR. Projections start from the end of yesterday, but today's sales are evidence too, especially near the
+ * event. Past years show what share of the same day's sales (same days before) was in by this time of day, so today's
+ * sales so far (up to the last download) estimate the whole of today. That estimate is trusted more as the day goes on
+ * (fully from mid-day's typical half), and the difference from each scenario's own figure for today carries forward.
+ *
  * PACE. Recent pace (tickets a day over the last 7 / 14 complete days) is compared with past years over the same 7
  * days before their performance, and the forecast gives the expected pace ahead (next 7 days, final 3 days), so the
  * late surge every year has is expected rather than read as falling behind. Daily figures per scenario feed the
@@ -52,7 +57,9 @@ export const CLOSED_SHARE = 0.9; // sold at least this share of capacity and the
 const CLOSED_GAP_MS = 60 * 60_000; // ...with no booking in the last hour before the performance
 const CLOSING_RATE_MINUTES = 120; // closing rate measured over the two hours before sales stopped
 const SLOT = 15; // minutes per step in the performance-day profile
-const MIN_DAY_TICKETS = 50; // on the day, below this many of a past year's tickets by "now", scale by size instead
+const MIN_DAY_TICKETS = 50;
+const MIN_TODAY_SHARE = 0.1; // use today's sales once past years typically had this share of the day's sales in
+const TRUST_TODAY_SHARE = 0.5; // ...and trust them fully once half the day's sales are typically in // on the day, below this many of a past year's tickets by "now", scale by size instead
 
 const median = (xs) => {
   const s = xs.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
@@ -150,6 +157,22 @@ function dayTickets(profile, t, closed = null) {
   const i = Math.floor(x);
   if (i + 1 >= profile.grid.length) return profile.grid[profile.grid.length - 1];
   return profile.grid[i] + (profile.grid[i + 1] - profile.grid[i]) * (x - i);
+}
+
+/** Share of an event's tickets booked `db` days before their performance that were booked by London minute `minute`
+ *  of that day; null when that day has too few tickets to tell. */
+export function intradayShare(data, db, minute) {
+  const perfDay = new Map(data.performances.map((p) => [p.id, londonDay(p.starts_at)]));
+  let total = 0;
+  let before = 0;
+  for (const b of data.bookings) {
+    const c = Date.parse(b.created);
+    const pd = perfDay.get(b.perf_id);
+    if (!Number.isFinite(c) || pd === null || pd === undefined || pd - londonDay(c) !== db) continue;
+    total += b.tickets;
+    if (londonMinutes(c) <= minute) before += b.tickets;
+  }
+  return total >= 20 ? before / total : null;
 }
 
 /** Did a past event switch sales off early? { at, tickets, daysBefore, minute?, ratePerHour?, reachesCapacityAt? } or null. */
@@ -362,7 +385,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       curve.cumT = [...curve.cumT];
       curve.cumT[0] = at(curve.cumT, 1) + dayTickets(profile, profile.startMinute, closed);
     }
-    refs.push({ id: e.id, label: e.label, year: eventYear(e.firstStart), curve, profile, closed, soldDated, stoppedAt: closed && closed.daysBefore > 0 ? closed.daysBefore : null });
+    refs.push({ id: e.id, label: e.label, year: eventYear(e.firstStart), data: e.data, curve, profile, closed, soldDated, stoppedAt: closed && closed.daysBefore > 0 ? closed.daysBefore : null });
   }
   refs.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
   const readers = curveReaders(refs);
@@ -383,7 +406,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     const lateB = at(r.curve.cumB, 0) - bAt;
     const project = (fn) => {
       const values = [];
-      for (let d = 0; d <= N; d++) values[d] = Math.max(floor, offset + fn(d));
+      for (let d = 0; d <= N; d++) values[d] = offset + fn(d); // floored once today's sales are allowed for
       return values;
     };
     const out = {
@@ -404,17 +427,13 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
       momentum: null,
     };
     if (tAt > 0 && baseT > 0) {
-      const values = project((d) => (baseT * T(d)) / tAt);
-      const sd = sellOutDay(values, N, capacity);
-      out.share = { final: Math.round(values[0]), sellOut: sd === null ? null : { date: dayToIso(perfDay - sd), daysBefore: sd } };
-      scenarios.push({ ref: r, values, sellOut: sd });
+      out.share = {};
+      scenarios.push({ ref: r, values: project((d) => (baseT * T(d)) / tAt), summary: out.share });
     }
     if (window > 0) {
       const k = recentT / window;
-      const values = project((d) => baseT + k * (T(d) - tAt));
-      const sd = sellOutDay(values, N, capacity);
-      out.momentum = { final: Math.round(values[0]), ratio: round(k, 2), sellOut: sd === null ? null : { date: dayToIso(perfDay - sd), daysBefore: sd } };
-      scenarios.push({ ref: r, values, sellOut: sd });
+      out.momentum = { ratio: round(k, 2) };
+      scenarios.push({ ref: r, values: project((d) => baseT + k * (T(d) - tAt)), summary: out.momentum });
     }
     return out;
   });
@@ -426,9 +445,36 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     method = rate > 0 ? 'pace' : 'none';
     if (rate > 0) {
       const values = [];
-      for (let d = 0; d <= N; d++) values[d] = Math.max(floor, offset + baseT + rate * (Nb - d));
-      scenarios.push({ ref: null, values, sellOut: sellOutDay(values, N, capacity) });
+      for (let d = 0; d <= N; d++) values[d] = offset + baseT + rate * (Nb - d);
+      scenarios.push({ ref: null, values, summary: null });
     }
+  }
+
+  // Today so far (see the header): shift each scenario by the gap between today's estimated total and its own.
+  const startT = offset + baseT; // end of yesterday
+  let todayAdjust = null;
+  const syncs = target.data.performances.map((p) => Date.parse(p.last_synced_at)).filter(Number.isFinite);
+  const seenUntil = syncs.length ? Math.min(now, Math.min(...syncs)) : null;
+  if (scenarios.length && seenUntil !== null && londonDay(seenUntil) === today) {
+    const minute = londonMinutes(seenUntil);
+    const share = median(refs.map((r) => intradayShare(r.data, N, minute)));
+    if (share !== null && share >= MIN_TODAY_SHARE) {
+      const estimated = pace.today / share;
+      const weight = Math.min(1, share / TRUST_TODAY_SHARE);
+      for (const sc of scenarios) {
+        const own = sc.values[N] - startT;
+        const shift = weight * (estimated - own);
+        for (let d = 0; d <= N; d++) sc.values[d] += shift;
+      }
+      todayAdjust = { soFar: pace.today, asOf: isoAt(seenUntil), typicalShare: round(share, 3), estimatedToday: Math.round(estimated), weight: round(weight, 2) };
+    }
+  }
+
+  // A projection never goes below what is already sold.
+  for (const sc of scenarios) {
+    for (let d = 0; d <= N; d++) sc.values[d] = Math.max(floor, sc.values[d]);
+    sc.sellOut = sellOutDay(sc.values, N, capacity);
+    if (sc.summary) Object.assign(sc.summary, { final: Math.round(sc.values[0]), sellOut: sc.sellOut === null ? null : { date: dayToIso(perfDay - sc.sellOut), daysBefore: sc.sellOut } });
   }
 
   const pointwise = (fn) => {
@@ -450,6 +496,7 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
     latest: alreadySoldOut || !low ? null : dateOf(sellOutDay(low, N, capacity)),
     selling: scenarios.filter((s) => s.sellOut !== null).length,
     projectedFinal: central ? { central: Math.round(central[0]), low: Math.round(low[0]), high: Math.round(high[0]) } : null,
+    todayAdjust,
     timeOfDay: null,
   };
 
@@ -462,7 +509,6 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
   }
 
   // Pace, learned from past years: how this year's last week compares with theirs, and what the forecast expects ahead.
-  const startT = offset + baseT; // end of yesterday
   const daily = scenarios.map((sc) => {
     const v = [];
     for (let d = 0; d <= N; d++) v[d] = sc.values[d] - (d === N ? startT : sc.values[d + 1]);
@@ -479,8 +525,9 @@ export function forecastSellOut({ events, selectedId, capacity = DEFAULT_CAPACIT
   if (central) {
     const k7 = Math.min(7, N + 1);
     const k3 = Math.min(3, N + 1);
-    pace.expectedNext7 = { days: k7, perDay: round((central[N - k7 + 1] - startT) / k7, 1) };
-    pace.expectedFinal = { days: k3, perDay: round((central[0] - (k3 === N + 1 ? startT : central[k3])) / k3, 1) };
+    // From now (rest of today included), so they compare directly with `required`.
+    pace.expectedNext7 = { days: k7, perDay: round((central[N - k7 + 1] - floor) / k7, 1) };
+    pace.expectedFinal = { days: k3, perDay: round((central[0] - (k3 === N + 1 ? floor : central[k3])) / k3, 1) };
   } else {
     pace.expectedNext7 = null;
     pace.expectedFinal = null;

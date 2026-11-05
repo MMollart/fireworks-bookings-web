@@ -77,6 +77,13 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
     performance is treated as switched off (sales are usually turned off around 9,500). The forecast always runs to full
     capacity: on the performance day that year is carried on at the rate it was selling in the two hours before closing (and the
     table shows when it would have reached capacity); switched off on an earlier day, it is continued with the other years' growth.
+  - **Today so far:** projections start from the end of yesterday, then today's sales up to the last download are added in:
+    past years show what share of the same day's sales was in by this time of day, so today's sales so far estimate the whole
+    day, trusted fully once half the day's sales are typically in, and the difference carries forward.
+  - **Pace:** the last 7 days are compared with past years' same 7 days before their performance ("+10% on past years"), and the
+    forecast gives the expected pace from now for the next 7 days and the final 3 days, comparable with the pace needed to sell
+    out, so the late surge each year has is expected, not read as falling behind. The chart can show tickets per day (actual,
+    then forecast with a range) as well as the running total.
   - **Time of day:** when the sell-out falls on the performance day, each past year's performance-day sales by clock time
     (15-minute steps, Europe/London) are scaled to this year to estimate the time capacity is reached, with a range and a
     performance-day chart. On the day it uses today's sales so far (and, if sales have been switched off, when 10,000 would have
