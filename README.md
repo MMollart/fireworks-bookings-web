@@ -66,6 +66,21 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
 - Events are labelled by the year of the performance only ("2026"), in tables and charts alike.
 - No price per ticket is assumed (TicketSource only gives booking totals), so ticket reports show counts. Donations (`DONATION` booking lines, with Gift Aid) are reported separately from ticket revenue.
 - Analysis > **All years** compares every event as bars (earliest to latest), for all sales or to the equivalent date in the sales cycle. Every table sorts by clicking a column header; users can change their own password; admins can delete accounts.
+- Analysis > **Sell-out forecast** predicts when an upcoming event reaches its capacity (default 10,000 tickets, editable).
+  Bookings are aligned on days before their performance; each completed, fully downloaded past year gives two scenarios
+  projected from the end of yesterday: *share of sales* (this year sells the same share of its final total from here as that
+  year did) and *momentum* (this year's last 14 days vs that year's same 14 days, scaled forward). The forecast is their median,
+  with the lowest/highest as a range and "sells out in X of Y scenarios". Past years that sold out are continued past their
+  sell-out point with the other years' growth. Tickets per booking (adjusted for later bookings' size in past years) turns the
+  remaining tickets into bookings still needed. With no past year it falls back to the recent daily pace.
+  - **Sales switched off early:** a past year that sold at least 90% of capacity and then stopped more than an hour before the
+    performance is treated as switched off (sales are usually turned off around 9,500). The forecast always runs to full
+    capacity: on the performance day that year is carried on at the rate it was selling in the two hours before closing (and the
+    table shows when it would have reached capacity); switched off on an earlier day, it is continued with the other years' growth.
+  - **Time of day:** when the sell-out falls on the performance day, each past year's performance-day sales by clock time
+    (15-minute steps, Europe/London) are scaled to this year to estimate the time capacity is reached, with a range and a
+    performance-day chart. On the day it uses today's sales so far (and, if sales have been switched off, when 10,000 would have
+    been reached at that pace). Bookings are downloaded every 30 minutes, so "so far" can be up to that old (`src/analysis/forecast.js`).
 - The **Overview** shows one event's figures and defaults to the latest event.
 - **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
   customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search

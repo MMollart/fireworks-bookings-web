@@ -386,6 +386,7 @@
               <button class="btn btn-secondary btn-sm mode-btn" data-mode="sales" role="tab" aria-selected="false">Sales over time</button>
               <button class="btn btn-secondary btn-sm mode-btn active" data-mode="compare" role="tab" aria-selected="true">Compare events</button>
               <button class="btn btn-secondary btn-sm mode-btn" data-mode="years" role="tab" aria-selected="false">All years</button>
+              <button class="btn btn-secondary btn-sm mode-btn" data-mode="forecast" role="tab" aria-selected="false">Sell-out forecast</button>
             </div>
           </div>
 
@@ -448,6 +449,11 @@
             </select>
             <select id="yearsCurrency" class="filter-select" aria-label="Currency" style="display: none;"></select>
           </div>
+
+          <div class="filter-bar" id="analysisForecastControls" style="display: none;">
+            <label class="form-label" for="forecastCapacity">Capacity (tickets)</label>
+            <input type="number" id="forecastCapacity" class="search-input" style="flex: 0 0 120px; min-width: 120px;" min="1" step="1" value="10000">
+          </div>
         </div>
       </div>
 
@@ -458,6 +464,10 @@
         <div class="card">
           <div class="card-header"><h3 class="card-title" id="analysisChartTitle">Chart</h3></div>
           <div class="card-body"><div id="analysisChart" class="chart-wrap"></div></div>
+        </div>
+        <div class="card" id="analysisDayCard" style="display: none;">
+          <div class="card-header"><h3 class="card-title" id="analysisDayTitle">Performance day</h3></div>
+          <div class="card-body"><div id="analysisDayChart" class="chart-wrap"></div></div>
         </div>
         <div class="card">
           <div class="card-body">
