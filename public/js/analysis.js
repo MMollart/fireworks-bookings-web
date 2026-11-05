@@ -75,7 +75,7 @@
   function niceMax(v) {
     if (v <= 0) return 1;
     const pow = Math.pow(10, Math.floor(Math.log10(v)));
-    for (const m of [1, 2, 2.5, 5, 10]) if (m * pow >= v) return m * pow;
+    for (const m of [1, 1.2, 1.6, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * pow >= v) return m * pow; // a quarter of each is a round number
     return 10 * pow;
   }
 
@@ -88,6 +88,12 @@
   function renderChart(container, opts) {
     drawn.set(container, opts);
     draw(container, opts);
+    // Drawn while hidden (no width to measure)? Redraw at the real size once it is on screen.
+    if (!container.getBoundingClientRect().width) {
+      requestAnimationFrame(() => {
+        if (drawn.get(container) === opts && container.getBoundingClientRect().width) draw(container, opts);
+      });
+    }
   }
 
   function draw(container, { labels, series, format, title, forceBar = false, legend: legendItems = null, hatchNulls = true }) {
@@ -685,7 +691,9 @@
       ),
     ].join('');
 
-    // chart: cumulative tickets (or tickets per day), actual then forecast, with range (and capacity line)
+    // chart: cumulative tickets (or tickets per day), actual then forecast, with range (and capacity line).
+    // Shown before drawing: a hidden chart cannot measure its width and would be drawn small, then stretched.
+    $('analysisResults').style.display = '';
     const rows = data.rows;
     const labels = rows.map((r) => isoDate(r.date, false));
     if ($('forecastView').value === 'daily') {
