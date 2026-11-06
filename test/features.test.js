@@ -7,6 +7,7 @@ import { TicketSourceClient } from '../src/ticketsource/client.js';
 import { refreshEvents, listEventSummaries } from '../src/ticketsource/events.js';
 import { syncEventStep } from '../src/ticketsource/engine.js';
 import { refreshUnsettled } from '../src/ticketsource/auto.js';
+import { refreshPlan, setSchedule, getSchedule } from '../src/ticketsource/schedule.js';
 import { eventLabel } from '../src/lib/eventName.js';
 import { getDashboardSummary, getTicketTypeBreakdown, getDiscountCodeReport, listEventTotals } from '../src/domain/reports.js';
 import { listCustomers, reindexCustomers, upsertCustomer } from '../src/domain/customers.js';
@@ -319,6 +320,40 @@ describe('Scheduled refresh of unsettled events', () => {
     await db.prepare("INSERT OR REPLACE INTO ts_state (key, value) VALUES ('auto_refresh_lock', ?)").run(String(NOW2 - 20 * 60_000)); // stale lock
     assert.equal((await run()).status, 'ok');
     assert.equal((await db.prepare("SELECT value FROM ts_state WHERE key = 'auto_refresh_lock'").get()).value, '0');
+  });
+
+  test('refresh schedule: normal interval, shorter on the day of an event, and off', async () => {
+    const MIN = 60_000;
+    assert.deepEqual(await getSchedule(db), { normalMinutes: 30, eventDayMinutes: 10 });
+    assert.equal((await refreshPlan(db, cfg, { now: NOW2 })).due, true, 'due when it has never run');
+
+    await run();
+    const plan = (now) => refreshPlan(db, cfg, { now });
+    let p = await plan(NOW2 + 25 * MIN);
+    assert.equal(p.eventDay, false);
+    assert.equal(p.everyMinutes, 30);
+    assert.equal(p.due, false);
+    assert.equal(p.nextRunAt, new Date(NOW2 + 30 * MIN).toISOString());
+    assert.equal((await plan(NOW2 + 30 * MIN)).due, true);
+
+    // 2026-11-07 is the performance day (London date), so the event-day interval applies all day.
+    await db.prepare("INSERT OR REPLACE INTO ts_state (key, value) VALUES ('auto_refresh_started_at', ?)").run(String(Date.parse('2026-11-07T09:00:00Z')));
+    p = await plan(Date.parse('2026-11-07T09:10:00Z'));
+    assert.equal(p.eventDay, true);
+    assert.equal(p.everyMinutes, 10);
+    assert.equal(p.due, true);
+    assert.equal(p.eventsToday.length, 1);
+    assert.equal((await plan(Date.parse('2026-11-07T09:05:00Z'))).due, false);
+    assert.equal((await plan(Date.parse('2026-11-08T09:10:00Z'))).eventDay, false, 'the day after is not event day');
+
+    await setSchedule(db, { normalMinutes: 0, eventDayMinutes: 5 });
+    p = await plan(NOW2 + 10 * DAY);
+    assert.equal(p.due, false);
+    assert.equal(p.nextRunAt, null);
+    assert.equal((await plan(Date.parse('2026-11-07T09:05:00Z'))).due, true);
+
+    await assert.rejects(setSchedule(db, { normalMinutes: 7, eventDayMinutes: 5 }), /must be one of/);
+    assert.deepEqual(await getSchedule(db), { normalMinutes: 0, eventDayMinutes: 5 });
   });
 
   test('records an error instead of throwing', async () => {

@@ -1,5 +1,6 @@
 /**
- * Scheduled refresh of unsettled events (every 30 minutes, see [triggers] in wrangler.toml).
+ * Scheduled refresh of unsettled events. The cron ticks every 5 minutes (wrangler.toml); how often a refresh actually
+ * runs is chosen on the website (see schedule.js), with a shorter interval on the day of an event.
  *
  * Re-reads the event list and dates, then runs an incremental booking sync for every event that is unsettled
  * (including one that was unsettled when the run began and has just been settled, so its last changes are captured).
@@ -19,6 +20,7 @@ export async function refreshUnsettled(db, cfg, { budgetMs = 10 * 60_000, now = 
   const lock = Number(await getState(db, 'auto_refresh_lock')) || 0;
   if (lock && started - lock < LOCK_MS) return { status: 'skipped', reason: 'a refresh is already running' };
   await setState(db, 'auto_refresh_lock', started);
+  await setState(db, 'auto_refresh_started_at', started);
 
   const deadline = started + budgetMs;
   const summary = { status: 'ok', events: 0, imported: 0, seen: 0, calls: 0, error: null };

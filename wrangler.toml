@@ -21,7 +21,8 @@ NODE_ENV = "production"
 
 
 [triggers]
-crons = ["*/30 * * * *"]
+# Ticks every 5 minutes; how often TicketSource is actually read is set on the website (TicketSource tab).
+crons = ["*/5 * * * *"]
 
 [observability]
 enabled = true
