@@ -2,18 +2,20 @@ import { createApp } from './app.js';
 import { wrapD1 } from './db/adapter.js';
 import { initConfig } from './config.js';
 import { refreshUnsettled } from './ticketsource/auto.js';
+import { refreshPlan } from './ticketsource/schedule.js';
 
 const app = createApp((c) => wrapD1(c.env.DB));
 
 export default {
   fetch: (request, env, ctx) => app.fetch(request, env, ctx),
 
-  // Every 30 minutes (see [triggers] in wrangler.toml): refresh unsettled events; once a day also prune expired rows.
+  // Every 5 minutes (see [triggers] in wrangler.toml): refresh unsettled events when the interval chosen on the website
+  // (shorter on the day of an event) has passed; once a day also prune expired rows.
   async scheduled(event, env) {
     const db = wrapD1(env.DB);
     const when = new Date(event.scheduledTime ?? Date.now());
 
-    if (when.getUTCHours() === 3 && when.getUTCMinutes() < 30) {
+    if (when.getUTCHours() === 3 && when.getUTCMinutes() < 5) {
       const now = when.toISOString();
       await env.DB.batch([
         env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(now),
@@ -23,6 +25,8 @@ export default {
 
     try {
       const cfg = initConfig(env).ticketSource;
+      const plan = await refreshPlan(db, cfg, { now: when.getTime() });
+      if (!plan.due) return;
       console.log('Unsettled event refresh:', JSON.stringify(await refreshUnsettled(db, cfg)));
     } catch (err) {
       console.error('Unsettled event refresh failed:', err);

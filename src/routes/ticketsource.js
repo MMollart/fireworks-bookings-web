@@ -5,6 +5,7 @@ import { TicketSourceClient, StepLimit, rateStatus, getState } from '../ticketso
 import { refreshEvents, listEventSummaries } from '../ticketsource/events.js';
 import { syncEventStep } from '../ticketsource/engine.js';
 import { refreshUnsettled } from '../ticketsource/auto.js';
+import { refreshPlan, setSchedule, INTERVAL_OPTIONS } from '../ticketsource/schedule.js';
 
 const makeClient = (c) => new TicketSourceClient(c.get('db'), config.ticketSource);
 
@@ -33,7 +34,8 @@ export function ticketSourceRoutes() {
       rate: await rateStatus(db, config.ticketSource.callsPerMinute),
       settlementDays: config.ticketSource.settlementDays,
       autoRefresh: {
-        everyMinutes: 30,
+        ...(await refreshPlan(db, config.ticketSource)),
+        options: INTERVAL_OPTIONS,
         lastRunAt: await getState(db, 'auto_refresh_at'),
         lastResult: JSON.parse((await getState(db, 'auto_refresh_result')) || 'null'),
       },
@@ -75,6 +77,17 @@ export function ticketSourceRoutes() {
 
   // Runs the scheduled refresh of unsettled events now (admin), within a short time budget.
   r.post('/auto-refresh', requireAdmin, async (c) => c.json(await refreshUnsettled(c.get('db'), config.ticketSource, { budgetMs: 25_000 })));
+
+  // How often the automatic refresh runs: { normalMinutes, eventDayMinutes } (0 = off). Admins only.
+  r.put('/auto-refresh/schedule', requireAdmin, async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    try {
+      await setSchedule(c.get('db'), body);
+    } catch (err) {
+      return c.json({ error: err.message }, 400);
+    }
+    return c.json({ success: true, autoRefresh: await refreshPlan(c.get('db'), config.ticketSource) });
+  });
 
   // Pin an event as settled/unsettled (TicketSource's API has no settlement flag). null = automatic.
   r.patch('/events/:id/state', requireAdmin, async (c) => {

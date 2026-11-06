@@ -53,6 +53,22 @@ describe('HTTP API & Authentication Integration Tests', () => {
     viewerCookie = cookieOf(await call('POST', '/api/auth/login', { json: { username: 'vieweruser', password: 'ViewerPass123!' } }));
   });
 
+  test('Refresh schedule can be read by anyone and changed only by admins', async () => {
+    const get = await call('GET', '/api/ticketsource/events', { cookie: viewerCookie });
+    assert.equal(get.body.autoRefresh.normalMinutes, 30);
+    assert.equal(get.body.autoRefresh.eventDayMinutes, 10);
+    assert.ok(get.body.autoRefresh.options.includes(10));
+
+    const body = { normalMinutes: 60, eventDayMinutes: 5 };
+    assert.equal((await call('PUT', '/api/ticketsource/auto-refresh/schedule', { cookie: viewerCookie, json: body })).status, 403);
+    assert.equal((await call('PUT', '/api/ticketsource/auto-refresh/schedule', { cookie: operatorCookie, json: body })).status, 403);
+    assert.equal((await call('PUT', '/api/ticketsource/auto-refresh/schedule', { cookie: adminCookie, json: { normalMinutes: 7, eventDayMinutes: 5 } })).status, 400);
+    const put = await call('PUT', '/api/ticketsource/auto-refresh/schedule', { cookie: adminCookie, json: body });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.autoRefresh.everyMinutes, 60);
+    assert.equal((await call('GET', '/api/ticketsource/events', { cookie: viewerCookie })).body.autoRefresh.normalMinutes, 60);
+  });
+
   test('Security headers are present on responses', async () => {
     const res = await call('GET', '/health');
     assert.equal(res.status, 200);

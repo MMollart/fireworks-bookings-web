@@ -88,7 +88,7 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
   - **Time of day:** when the sell-out falls on the performance day, each past year's performance-day sales by clock time
     (15-minute steps, Europe/London) are scaled to this year to estimate the time capacity is reached, with a range and a
     performance-day chart. On the day it uses today's sales so far (and, if sales have been switched off, when 10,000 would have
-    been reached at that pace). Bookings are downloaded every 30 minutes, so "so far" can be up to that old (`src/analysis/forecast.js`).
+    been reached at that pace). Bookings are downloaded on the refresh schedule (every 10 minutes on the day by default), so "so far" can be up to that old (`src/analysis/forecast.js`).
 - The **Overview** shows one event's figures and defaults to the latest event.
 - **Customer search** (name or email address, at least 3 letters) uses a keyed prefix index (`customer_search`) so only a handful of
   customers are decrypted per search. New customers are indexed as they are downloaded; **Configuration > Build customer search
@@ -96,6 +96,10 @@ Add or reset an admin later: `node scripts/create-admin.js <username> <password>
 - **Configuration** (admins): the ticket type dictionary maps each TicketSource ticket type to a reporting category (e.g. "Early Bird
   Adult Ticket" and "Adult Ticket" are both "Adult"). Reports > Ticket Tier Distribution uses it; unmapped types appear under their own name.
   TicketSource marks the extra seats of a Family ticket as "Standard"; they are seeded as "Family (included seats)".
-- A cron every 30 minutes (`wrangler.toml`, `src/ticketsource/auto.js`) re-reads the event list and incrementally syncs every unsettled
-  event (settled and archived events are left alone); once a day it also prunes expired sessions and rate-limit rows.
+- **Automatic refresh** (`src/ticketsource/auto.js`, `src/ticketsource/schedule.js`) re-reads the event list and incrementally syncs every
+  unsettled event (settled and archived events are left alone). How often is chosen on the **TicketSource** tab by admins: a normal
+  interval (default every 30 minutes) and an **event-day** interval (default every 10 minutes) used all day, Europe/London, whenever an
+  unsettled event has a performance today. Either can be switched off. The cron in `wrangler.toml` ticks every 5 minutes and only runs a
+  refresh once the chosen interval has passed since the last one started (a manual "run now" counts). Once a day it also prunes expired
+  sessions and rate-limit rows.
 - General API rate limiting is not built in; use a Cloudflare WAF rate-limiting rule if you need it.

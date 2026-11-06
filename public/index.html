@@ -568,6 +568,15 @@
         </div>
         <div class="card-body">
           <p class="section-desc" id="tsAutoRefresh" style="margin-bottom: 0.5rem;"></p>
+          <div id="tsScheduleForm" class="ts-schedule" hidden>
+            <label>Refresh from TicketSource
+              <select id="tsScheduleNormal" class="filter-select" aria-label="Normal refresh interval"></select>
+            </label>
+            <label>On the day of an event
+              <select id="tsScheduleEventDay" class="filter-select" aria-label="Event-day refresh interval"></select>
+            </label>
+            <button class="btn btn-primary btn-sm" id="tsScheduleSave">Save</button>
+          </div>
           <p class="section-desc" id="tsStateHelp" style="margin-bottom: 0.75rem;"></p>
           <div class="table-responsive">
             <table class="data-table" id="tsEventsTable">

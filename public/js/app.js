@@ -596,15 +596,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('tsRateSub').textContent = data.rate.blockedUntil
         ? `Paused by TicketSource until ${formatDate(data.rate.blockedUntil)}`
         : 'Limit is 240 calls/min; this app stays below it';
-      const auto = data.autoRefresh;
-      const autoResult = auto && auto.lastResult;
-      document.getElementById('tsAutoRefresh').textContent = auto
-        ? `Unsettled events are refreshed automatically every ${auto.everyMinutes} minutes. ${
-            auto.lastRunAt
-              ? `Last run ${formatDate(auto.lastRunAt)}${autoResult ? `: ${autoResult.status === 'ok' ? `${autoResult.imported} bookings imported or updated` : autoResult.status === 'skipped' ? `skipped (${autoResult.reason})` : `${autoResult.status}${autoResult.error ? ` (${autoResult.error})` : ''}`}` : ''}.`
-              : 'It has not run yet.'
-          }`
-        : '';
+      renderAutoRefresh(data.autoRefresh);
       document.getElementById('tsStateHelp').textContent =
         'Status comes from TicketSource: unsettled, settled (its own settled flag) or archived. Settled events are hidden by TicketSource unless asked for; refreshing the list asks for them.';
 
@@ -644,6 +636,70 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.error('Error loading TicketSource events:', err);
     }
   }
+
+  const intervalLabel = (m) => (m === 0 ? 'Off' : m < 60 ? `Every ${m} minutes` : m === 60 ? 'Every hour' : m === 1440 ? 'Once a day' : `Every ${m / 60} hours`);
+
+  function renderAutoRefresh(auto) {
+    const text = document.getElementById('tsAutoRefresh');
+    const form = document.getElementById('tsScheduleForm');
+    if (!auto) {
+      text.textContent = '';
+      form.hidden = true;
+      return;
+    }
+    const r = auto.lastResult;
+    const result = r
+      ? r.status === 'ok' ? `${r.imported} bookings imported or updated`
+        : r.status === 'skipped' ? `skipped (${r.reason})`
+        : `${r.status}${r.error ? ` (${r.error})` : ''}`
+      : '';
+    const today = auto.eventDay ? `Today is event day (${auto.eventsToday.join(', ')}), so the event-day setting applies. ` : '';
+    const schedule = auto.everyMinutes
+      ? `Unsettled events are refreshed automatically ${intervalLabel(auto.everyMinutes).toLowerCase()}.`
+      : 'Automatic refresh is off.';
+    const last = auto.lastRunAt ? ` Last run ${formatDate(auto.lastRunAt)}${result ? `: ${result}` : ''}.` : ' It has not run yet.';
+    const next = auto.nextRunAt ? ` Next run around ${formatDate(auto.nextRunAt)}.` : '';
+    text.textContent = `${today}${schedule}${last}${next}`;
+
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    form.hidden = !isAdmin;
+    if (!isAdmin) return;
+    const fill = (id, value) => {
+      const sel = document.getElementById(id);
+      if (sel.dataset.dirty) return; // keep an unsaved choice when the list reloads
+      sel.innerHTML = auto.options.map((m) => `<option value="${m}">${intervalLabel(m)}</option>`).join('');
+      sel.value = String(value);
+    };
+    fill('tsScheduleNormal', auto.normalMinutes);
+    fill('tsScheduleEventDay', auto.eventDayMinutes);
+  }
+
+  ['tsScheduleNormal', 'tsScheduleEventDay'].forEach((id) =>
+    document.getElementById(id).addEventListener('change', (e) => (e.target.dataset.dirty = '1')));
+
+  document.getElementById('tsScheduleSave').addEventListener('click', async () => {
+    const btn = document.getElementById('tsScheduleSave');
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/ticketsource/auto-refresh/schedule', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          normalMinutes: Number(document.getElementById('tsScheduleNormal').value),
+          eventDayMinutes: Number(document.getElementById('tsScheduleEventDay').value)
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      ['tsScheduleNormal', 'tsScheduleEventDay'].forEach((id) => delete document.getElementById(id).dataset.dirty);
+      showToast('Refresh schedule saved', 'success');
+      loadSync();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // Keeps calling the resumable step endpoint until the event is fully synced, waiting out rate limits.
   async function syncTsEvent(eventId, mode) {
