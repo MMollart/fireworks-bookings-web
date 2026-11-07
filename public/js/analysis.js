@@ -96,17 +96,21 @@
     }
   }
 
-  function draw(container, { labels, series, format, title, forceBar = false, legend: legendItems = null, hatchNulls = true }) {
+  // baseline: the value at the bottom of the y-axis (default 0). With one, gridlines read as "+N" added on top of it.
+  function draw(container, { labels, series, format, title, forceBar = false, legend: legendItems = null, hatchNulls = true, baseline = null }) {
     const W = Math.max(280, Math.floor(container.getBoundingClientRect().width || container.parentElement?.getBoundingClientRect().width || 640));
     const narrow = W < 520;
     const H = narrow ? 300 : 340;
     const L = narrow ? 52 : 64, R = 14, T = 14, B = narrow ? 84 : 76;
     const plotW = W - L - R, plotH = H - T - B;
     const all = series.flatMap((s) => s.values).filter((v) => v !== null);
-    const max = niceMax(Math.max(0, ...all));
+    const min = baseline ?? 0;
+    const max = niceMax(Math.max(0, ...all.map((v) => v - min)));
     const n = labels.length;
     const asLine = !forceBar && n > MAX_BAR_CATEGORIES;
-    const y = (v) => T + plotH - (v / max) * plotH;
+    const y = (v) => T + plotH - (Math.max(0, v - min) / max) * plotH;
+    const tick = (step) => (baseline === null ? format(step) : step === 0 ? format(min) : `+${format(step)}`);
+    const readValue = (v) => (baseline === null ? format(v) : `${format(v)} (+${format(v - min)})`);
     const slot = plotW / Math.max(1, n); // one category's width (bars) / spacing basis (labels)
     const xCentre = (i) => (asLine ? (n === 1 ? L + plotW / 2 : L + (i * plotW) / (n - 1)) : L + i * slot + slot / 2);
     const fontSize = narrow ? 12 : 12;
@@ -114,9 +118,10 @@
     let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}" class="chart">`;
     svg += `<defs><pattern id="nodata" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#d9cfe3"/></pattern></defs>`;
     for (let i = 0; i <= 4; i++) {
-      const v = (max / 4) * i;
+      const step = (max / 4) * i;
+      const v = min + step;
       svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="#d9cfe3" stroke-width="1"/>`;
-      svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="${fontSize}" fill="#5c5558">${esc(format(v))}</text>`;
+      svg += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="${fontSize}" fill="#5c5558">${esc(tick(step))}</text>`;
     }
 
     // no-data spans (not downloaded: shown hatched, never as zero)
@@ -151,7 +156,7 @@
           const v = s.values[i];
           if (v === null) return;
           const x = xCentre(i) - (barW * k) / 2 + j * barW;
-          const h = Math.max(v === 0 ? 0 : 1, (v / max) * plotH);
+          const h = Math.max(v === min ? 0 : 1, T + plotH - y(v));
           svg += `<rect x="${x}" y="${T + plotH - h}" width="${Math.max(1, barW - 2)}" height="${h}" fill="${s.colors ? s.colors[i] : s.color}"><title>${esc(label)} - ${esc(s.name)}: ${esc(format(v))}</title></rect>`;
         });
       });
@@ -187,7 +192,7 @@
       marker.setAttribute('visibility', 'visible');
       readout.innerHTML = `<strong>${esc(labels[i])}</strong>: ${series
         .filter((s) => hatchNulls || s.values[i] !== null)
-        .map((s) => `<span class="readout-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)} ${s.values[i] === null ? 'No data' : esc(format(s.values[i]))}</span>`)
+        .map((s) => `<span class="readout-item"><span class="legend-swatch" style="background:${s.color}"></span>${esc(s.name)} ${s.values[i] === null ? 'No data' : esc(readValue(s.values[i]))}</span>`)
         .join(' ')}`;
     };
     hit.addEventListener('pointerdown', show);
@@ -585,8 +590,13 @@
     card.style.display = '';
     $('analysisDayTitle').textContent = `Performance day: ${tod.basis === 'today' ? 'sales so far today and forecast' : 'forecast'} to the ${clockTime(tod.performanceStart)} start`;
     const rows = tod.rows;
+    // The 00:00 total is the baseline (bottom-left corner); the chart shows what is added on top of it during the day.
+    const first = rows[0] ? [rows[0].actual, rows[0].central, rows[0].low, rows[0].high].filter((v) => v !== null && v !== undefined) : [];
+    const baseline = first.length ? Math.min(...first) : null;
+    if (baseline !== null) $('analysisDayTitle').textContent += ` (from ${num(baseline)} at 00:00)`;
     renderChart($('analysisDayChart'), {
       title: 'Performance day forecast chart',
+      baseline,
       labels: rows.map((r) => clockTime(r.time)),
       hatchNulls: false,
       series: [
